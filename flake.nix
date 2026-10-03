@@ -29,6 +29,22 @@
     pkgs = import nixpkgs { system = "x86_64-linux"; };
     rocm = pkgs.rocmPackages;
 
+    # The tagged v0.1.37 hip_backend.cmake only accepts gfx1100/gfx1101/gfx1200/gfx1201 (unvalidated:
+    # gfx1102;gfx1030); the support for gfx1151 (Radeon 8060S) and gfx1150 (Radeon 890M) this flake's
+    # default config.json targets landed upstream after the tag. This repository therefore carries the
+    # patched file (cmake/hip_backend.cmake - identical to the tag's apart from adding those two
+    # archs to _strata_hip_unvalidated) and the source is the GitHub input with that one file
+    # replaced; the narHash pin on the tag keeps the rest of the source. When the patch is
+    # upstreamed, remove the overlay and re-pin strataSrc.
+    strataPatched = pkgs.runCommand "strata-src-with-hip-patch" {} ''
+      # $src is a read-only store path, so copy writable, swap the one file in, and move the result
+      cp -a ${strataSrc} $out.tmp
+      find $out.tmp -type d -exec chmod u+w {} +
+      rm $out.tmp/cmake/hip_backend.cmake
+      cp ${./cmake/hip_backend.cmake} $out.tmp/cmake/hip_backend.cmake
+      mv $out.tmp $out
+    '';
+
     readJson = p:          # tryEval returns { success, value }; a missing/bad file yields success = false
       let r = builtins.tryEval (builtins.fromJSON (builtins.readFile p));
       in if r.success then r.value else null;
@@ -224,7 +240,7 @@
     strata = pkgs.stdenv.mkDerivation {
       pname = "strata";
       inherit version;
-      src = strataSrc;   # the github:Niko1221/Strata input (v0.1.37, flake = false)
+      src = strataPatched;   # the GitHub input with the post-tag gfx1151/gfx1150 HIP patch applied
 
       nativeBuildInputs = [ pkgs.cmake pkgs.ninja ];
       # stdenv skips its default configure (it would run cmake with no flags and hit the network
