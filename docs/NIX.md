@@ -117,6 +117,23 @@ The engine alone (no server) is `bin/strata`; its usage is `--help`. The device 
 `bin/strata-device --list-devices` - run it first when a card is not found: if it does not list
 the card, the kernel driver or the build's architecture list is the problem, not the model.
 
+### As a NixOS service
+
+`nixosModules.strata` runs the server as a systemd unit:
+
+```nix
+services.strata.enable = true;
+services.strata.hipArchs = "gfx1100;gfx1151;gfx1201";       # the card in the machine
+services.strata.apiKey = "a long random secret";             # or null + environment.STRATA_API_KEY
+```
+
+The engine config is the package's own `etc/strata/strata.json` with the service's settings merged in,
+so the pins stay in the package: `cwd` moves to the state directory (the store is read-only), and
+`env`, `engineArgs`, `extraConfig` are added on top. The unit runs as the `strata` user with the
+`render` and `video` groups - the card is reached through `/dev/kfd` and `/dev/dri`, so
+`PrivateDevices` is not set - with an unlimited memlock for the resident experts and no start timeout,
+since loading the model takes minutes.
+
 ## What the package is and is not
 
 - In: the engine and server for one model family, the ROCm runtime, the Python dependencies.

@@ -45,5 +45,8 @@
   {
     packages.x86_64-linux.strata = strata;
     packages.x86_64-linux.default = strata;
+    # the service module (modules/services/strata.nix): import it in a NixOS configuration as
+    # nixosModules.strata, then services.strata.enable = true
+    nixosModules.strata = import ./modules/services/strata.nix;
   };
 }
