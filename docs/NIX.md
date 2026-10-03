@@ -2,7 +2,9 @@
 
 The [flake](../flake.nix) builds the Strata engine for AMD cards with nixpkgs' ROCm 7 (hipcc +
 hipBLAS from `pkgs.rocmPackages`, no TheRock wheels, no overlay) and packages it with the Python
-server. The package (`.#strata`) contains, in one store path:
+server. The package definition itself is [pkgs/by-name/st/strata/package.nix](../pkgs/by-name/st/strata/package.nix)
+(the pins, the build, the config the server reads); the flake only picks the source and the
+architecture list from its inputs and `callPackage`s it. The package (`.#strata`) contains, in one store path:
 
 - `bin/strata` - the engine, compiled with `-DSTRATA_ENABLE_HIP=ON`
 - `bin/strata-device` - the device probe (`--list-devices`)
