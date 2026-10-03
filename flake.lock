@@ -25,11 +25,11 @@
     "strata-config": {
       "flake": false,
       "locked": {
-        "path": "./nix/config.json",
+        "path": "./pkgs/by-name/st/strata/config.json",
         "type": "path"
       },
       "original": {
-        "path": "./nix/config.json",
+        "path": "./pkgs/by-name/st/strata/config.json",
         "type": "path"
       },
       "parent": []

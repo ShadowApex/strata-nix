@@ -3,7 +3,7 @@
 #
 # This is the package definition; the flake callPackages it (flake.nix). The source is fetched here,
 # not passed in: the only thing a package.nix cannot know on its own comes from a flake input:
-#   hipArchs the HIP target list (input strata-config, default nix/config.json)
+#   hipArchs the HIP target list (input strata-config, default config.json beside this package)
 # Everything else - the source pin, the build, the config the server reads - lives here.
 
 {
@@ -40,16 +40,16 @@ let
   # The tagged v0.1.37 hip_backend.cmake only accepts gfx1100/gfx1101/gfx1200/gfx1201 (unvalidated:
   # gfx1102;gfx1030); the support for gfx1151 (Radeon 8060S) and gfx1150 (Radeon 890M) this package's
   # default config.json targets landed upstream after the tag. This repository therefore carries the
-  # patched file (cmake/hip_backend.cmake - identical to the tag's apart from adding those two archs to
-  # _strata_hip_unvalidated) and the source is the fetchFromGitHub archive with that one file replaced;
-  # the hash pin on the tag keeps the rest of the source. When the patch is upstreamed, remove the
-  # overlay and re-pin the fetchFromGitHub hash.
+  # patched file (hip_backend.cmake, beside this package - identical to the tag's apart from adding
+  # those two archs to _strata_hip_unvalidated) and the source is the fetchFromGitHub archive with that
+  # one file replaced; the hash pin on the tag keeps the rest of the source. When the patch is
+  # upstreamed, remove the overlay and re-pin the fetchFromGitHub hash.
   strataPatched = runCommand "strata-src-with-hip-patch" {} ''
     # $src is a read-only store path, so copy writable, swap the one file in, and move the result
     cp -a ${src} $out.tmp
     find $out.tmp -type d -exec chmod u+w {} +
     rm $out.tmp/cmake/hip_backend.cmake
-    cp ${../../../../cmake/hip_backend.cmake} $out.tmp/cmake/hip_backend.cmake
+    cp ${./hip_backend.cmake} $out.tmp/cmake/hip_backend.cmake
     mv $out.tmp $out
   '';
 
@@ -57,9 +57,9 @@ let
   # LLAMA_CPP_COMMIT and third_party/ggml/VERSION.txt record the same id). -DSTRATA_GGML_DIR points
   # CMake at the unpacked store path, so the sandbox needs no network at configure time. Its
   # gguf-py/ (the Python GGUF reader) is what the build-time tools below import through STRATA_GGUF_PY.
-  # The repo's own module (nix/llama.cpp.nix); it would have to move into the package if this package
-  # were upstreamed to nixpkgs.
-  llamaCpp = import ../../../../nix/llama.cpp.nix { inherit fetchurl stdenvNoCC; };
+  # The repo's own module, now beside this package (llama.cpp.nix); this whole directory is what would
+  # have to move if this package were upstreamed to nixpkgs.
+  llamaCpp = import ./llama.cpp.nix { inherit fetchurl stdenvNoCC; };
 
   # The server's non-stdlib imports (serve/ and tools/strata_tokenizer.py): jinja2 (chat templates),
   # regex (the tokenizer), psutil (RAM telemetry), pillow (the image formats the engine's decoder
@@ -221,7 +221,7 @@ let
     "-DCMAKE_BUILD_TYPE=Release"
     "-DCMAKE_PREFIX_PATH=${lib.makeSearchPath ":" rocmLibs}"
     # the HIP driver (ROCm clang with the ROCm environment wired up) for the .cu sources
-    # cmake/hip_backend.cmake relabels to the HIP language
+    # the package's hip_backend.cmake relabels to the HIP language
     "-DCMAKE_HIP_COMPILER=${rocm.clr}/bin/amdclang++"
     # the target list from the flake input; shell-quoted because the ";" list separator is a bash command
     # separator in buildPhase

@@ -6,15 +6,16 @@
     # the project source is not an input: the package fetches it itself with pkgs.fetchFromGitHub,
     # pinned to the v0.1.37 tag (setup.py's MIN_ENGINE, the `version` in the package). To track main
     # or bump the version, change the fetch in pkgs/by-name/st/strata/package.nix.
-    # the HIP target list the engine is compiled for, read from nix/config.json. Override it for
+    # the HIP target list the engine is compiled for, read from the package's config.json
+    # (pkgs/by-name/st/strata/config.json). Override it for
     # your card with any of:
-    #   nix build .#strata --override-input strata-config path:./nix/config.gfx1100.json
+    #   nix build .#strata --override-input strata-config path:./pkgs/by-name/st/strata/config.gfx1100.json
     #   nix build .#strata --override-input strata-config path:<your-file.json>
     # a file holding just the string also works: --override-input strata-config path:.../archs.json
-    # with { "hipArchs": "gfx1100;gfx1201" }. The list is validated by cmake/hip_backend.cmake
+    # with { "hipArchs": "gfx1100;gfx1201" }. The list is validated by the package's hip_backend.cmake
     # (gfx1100 + gfx1201 maintainer-validated, gfx1101 + gfx1200 community-validated, the rest build
     # with a warning; docs/AMD_HIP.md).
-    strata-config = { url = "path:./nix/config.json"; flake = false; };
+    strata-config = { url = "path:./pkgs/by-name/st/strata/config.json"; flake = false; };
   };
 
   outputs = { self, nixpkgs, strata-config }:
@@ -26,7 +27,7 @@
       in if r.success then r.value else null;
     # strata-config is a sourceInfo attrset (non-flake path input); .outPath names the single file it holds.
     # The file may hold the string with the list or an object { "hipArchs": "..." }.
-    cfg = let a = readJson strata-config.outPath; in if a != null then a else readJson ./nix/config.json;   # override first, then in-repo
+    cfg = let a = readJson strata-config.outPath; in if a != null then a else readJson ./pkgs/by-name/st/strata/config.json;   # override first, then in-repo
     hipArchs =
       let chosen = cfg;
       in if chosen == null then "gfx1100;gfx1151;gfx1201"

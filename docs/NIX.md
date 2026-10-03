@@ -3,7 +3,8 @@
 The [flake](../flake.nix) builds the Strata engine for AMD cards with nixpkgs' ROCm 7 (hipcc +
 hipBLAS from `pkgs.rocmPackages`, no TheRock wheels, no overlay) and packages it with the Python
 server. The package definition itself is [pkgs/by-name/st/strata/package.nix](../pkgs/by-name/st/strata/package.nix)
-(the source pin, the build, the config the server reads); the flake only picks the architecture list
+(the source pin, the build, the config the server reads), and the files it reads live beside it there
+(`hip_backend.cmake`, `llama.cpp.nix`, `config.json`); the flake only picks the architecture list
 from its inputs and `callPackage`s it. The package (`.#strata`) contains, in one store path:
 
 - `bin/strata` - the engine, compiled with `-DSTRATA_ENABLE_HIP=ON`
@@ -33,13 +34,14 @@ The build runs CMake + Ninja in the Nix sandbox. The source is fetched by the pa
 (`fetchFromGitHub`, pinned to the `v0.1.37` tag) - it is not a flake input, so `nix flake update`
 does not move it; bump `version` in the package and re-pin its hash. The llama.cpp the engine builds
 ggml from is not fetched over the network at configure time: it is the pinned commit `3cf03257f219...`
-unpacked from a hash-pinned tarball ([nix/llama.cpp.nix](../nix/llama.cpp.nix); the same commit
+unpacked from a hash-pinned tarball ([llama.cpp.nix](../pkgs/by-name/st/strata/llama.cpp.nix); the same commit
 CMakeLists.txt's FetchContent default and `setup.py`'s LLAMA_CPP_COMMIT use), passed as
 `-DSTRATA_GGML_DIR`.
 
 ### Which card: the architecture list
 
-The flake input `strata-config` (default [nix/config.json](../nix/config.json)) carries
+The flake input `strata-config` (default [config.json](../pkgs/by-name/st/strata/config.json), beside
+the package) carries
 `"hipArchs"`, the list the engine is compiled for. It defaults to `gfx1100;gfx1151;gfx1201`:
 
 - `gfx1100` - RX 7900 XT / XTX (RDNA3)
@@ -51,7 +53,7 @@ validated cards are in [AMD_HIP.md](AMD_HIP.md)):
 
 ```sh
 # one architecture: the ready-made example file, or your own one-liner
-nix build .#strata --override-input strata-config path:./nix/config.gfx1100.json
+nix build .#strata --override-input strata-config path:./pkgs/by-name/st/strata/config.gfx1100.json
 # several (cards of two families need it, e.g. a gfx1100 + gfx1201 split, see AMD_HIP.md):
 echo '{"hipArchs": "gfx1100;gfx1201"}' > /tmp/strata-gfx1100-gfx1201.json
 nix build .#strata --override-input strata-config path:/tmp/strata-gfx1100-gfx1201.json
@@ -66,7 +68,9 @@ The chosen list lands in `bin/BUILD.json` (so a machine can see what its engine 
 The build log also prints one line per target (`compiling for gfx1100` / `gfx1151` / `gfx1201`) and
 CMake's own `-- Strata: HIP enabled, arch gfx1100,gfx1151,gfx1201`. An architecture that does not
 belong to any supported card family is refused by CMake (the same
-`cmake/hip_backend.cmake` list the `setup.py` build uses); the rest of the list is compiled anyway.
+`cmake/hip_backend.cmake` list the `setup.py` build uses; the package overrides that file with its own
+[hip_backend.cmake](../pkgs/by-name/st/strata/hip_backend.cmake), which adds `gfx1151` and `gfx1150`);
+the rest of the list is compiled anyway.
 
 ## Run
 
