@@ -3,14 +3,9 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-    # the project source, pulled from GitHub at the v0.1.37 tag (setup.py's MIN_ENGINE, the
-    # `version` in the package). flake = false, so the input is a plain store path rather than a
-    # flake - that is what the derivation's src uses. To track main or bump the version,
-    # change the ref here: nix flake update strataSrc
-    #   strataSrc = github:Niko1221/Strata/v0.1.x
-    #   strataSrc = github:Niko1221/Strata/main
-    # named strataSrc so it does not shadow the `strata` package built from it.
-    strataSrc = { url = "github:Niko1221/Strata/v0.1.37"; flake = false; };
+    # the project source is not an input: the package fetches it itself with pkgs.fetchFromGitHub,
+    # pinned to the v0.1.37 tag (setup.py's MIN_ENGINE, the `version` in the package). To track main
+    # or bump the version, change the fetch in pkgs/by-name/st/strata/package.nix.
     # the HIP target list the engine is compiled for, read from nix/config.json. Override it for
     # your card with any of:
     #   nix build .#strata --override-input strata-config path:./nix/config.gfx1100.json
@@ -22,7 +17,7 @@
     strata-config = { url = "path:./nix/config.json"; flake = false; };
   };
 
-  outputs = { self, nixpkgs, strataSrc, strata-config }:
+  outputs = { self, nixpkgs, strata-config }:
   let
     pkgs = import nixpkgs { system = "x86_64-linux"; };
 
@@ -39,11 +34,10 @@
          else if chosen ? hipArchs then chosen.hipArchs
          else "gfx1100;gfx1151;gfx1201";
 
-    # the package itself lives in pkgs/by-name/st/strata/package.nix (the pins, the build, the config
-    # the server reads). Only what a package.nix cannot know on its own is passed in here: the pinned
-    # source from the flake input and the architecture list chosen above.
+    # the package itself lives in pkgs/by-name/st/strata/package.nix (the source pin, the build, the
+    # config the server reads). Only what a package.nix cannot know on its own is passed in here: the
+    # architecture list chosen above.
     strata = pkgs.callPackage ./pkgs/by-name/st/strata/package.nix {
-      src = strataSrc;
       inherit hipArchs;
     };
   in

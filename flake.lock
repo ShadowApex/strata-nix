@@ -19,8 +19,7 @@
     "root": {
       "inputs": {
         "nixpkgs": "nixpkgs",
-        "strata-config": "strata-config",
-        "strataSrc": "strataSrc"
+        "strata-config": "strata-config"
       }
     },
     "strata-config": {
@@ -34,23 +33,6 @@
         "type": "path"
       },
       "parent": []
-    },
-    "strataSrc": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1790961960,
-        "narHash": "sha256-0so8fFampbUIvWmYQPKr3MzHH0lB6kCtluxWe/erves=",
-        "owner": "Niko1221",
-        "repo": "Strata",
-        "rev": "db4f91a1171d697928b0d2e1f50ef95e25559d4c",
-        "type": "github"
-      },
-      "original": {
-        "owner": "Niko1221",
-        "ref": "v0.1.37",
-        "repo": "Strata",
-        "type": "github"
-      }
     }
   },
   "root": "root",

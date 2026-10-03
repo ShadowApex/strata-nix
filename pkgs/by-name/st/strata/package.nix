@@ -1,11 +1,10 @@
 # Strata: the inference engine (HIP) and its Python server, with the IQ2_XS model, its derived
 # tokenizer and the MTP draft layer, every download a pinned fetchurl - one self-contained store path.
 #
-# This is the package definition; the flake callPackages it (flake.nix). Two things a package.nix
-# cannot know on its own come from flake inputs and are passed in:
-#   src      the pinned GitHub source (input strataSrc, e.g. github:Niko1221/Strata/v0.1.37)
+# This is the package definition; the flake callPackages it (flake.nix). The source is fetched here,
+# not passed in: the only thing a package.nix cannot know on its own comes from a flake input:
 #   hipArchs the HIP target list (input strata-config, default nix/config.json)
-# Everything else - the pins, the build, the config the server reads - lives here.
+# Everything else - the source pin, the build, the config the server reads - lives here.
 
 {
   lib,
@@ -13,13 +12,13 @@
   cmake,
   ninja,
   fetchurl,
+  fetchFromGitHub,
   linkFarm,
   runCommand,
   writeTextFile,
   stdenvNoCC,
   rocmPackages,
   python3,
-  src,
   hipArchs,
 }:
 let
@@ -28,13 +27,23 @@ let
   version = "0.1.37";   # setup.py's MIN_ENGINE: the engine this package builds
   archList = lib.splitString ";" hipArchs;
 
+  # The source, fetched from GitHub at the tag matching this package's version. The hash is the
+  # unpacked archive's, so a version bump (or a change to the tag) means re-pinning it - the first
+  # build reports the mismatch, or: nix-prefetch-url --unpack <archive url>.
+  src = fetchFromGitHub {
+    owner = "Niko1221";
+    repo = "Strata";
+    rev = "v${version}";
+    hash = "sha256-0so8fFampbUIvWmYQPKr3MzHH0lB6kCtluxWe/erves=";
+  };
+
   # The tagged v0.1.37 hip_backend.cmake only accepts gfx1100/gfx1101/gfx1200/gfx1201 (unvalidated:
   # gfx1102;gfx1030); the support for gfx1151 (Radeon 8060S) and gfx1150 (Radeon 890M) this package's
   # default config.json targets landed upstream after the tag. This repository therefore carries the
   # patched file (cmake/hip_backend.cmake - identical to the tag's apart from adding those two archs to
-  # _strata_hip_unvalidated) and the source is the GitHub input with that one file replaced; the narHash
-  # pin on the tag keeps the rest of the source. When the patch is upstreamed, remove the overlay and
-  # re-pin strataSrc.
+  # _strata_hip_unvalidated) and the source is the fetchFromGitHub archive with that one file replaced;
+  # the hash pin on the tag keeps the rest of the source. When the patch is upstreamed, remove the
+  # overlay and re-pin the fetchFromGitHub hash.
   strataPatched = runCommand "strata-src-with-hip-patch" {} ''
     # $src is a read-only store path, so copy writable, swap the one file in, and move the result
     cp -a ${src} $out.tmp
@@ -224,7 +233,7 @@ in
 stdenv.mkDerivation (finalAttrs: {
   pname = "strata";
   inherit version;
-  src = strataPatched;   # the GitHub input with the post-tag gfx1151/gfx1150 HIP patch applied
+  src = strataPatched;   # the GitHub fetch with the post-tag gfx1151/gfx1150 HIP patch applied
 
   nativeBuildInputs = [ cmake ninja ];
   # stdenv skips its default configure (it would run cmake with no flags and hit the network
