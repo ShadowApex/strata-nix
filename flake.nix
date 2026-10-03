@@ -5,10 +5,13 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     # the project source, pulled from GitHub at the v0.1.37 tag (setup.py's MIN_ENGINE, the
     # `version` variable below). flake = false, so the input is a plain store path rather than a
-    # flake - that is what `src` uses below. To track main or bump the version, change the ref here:
+    # flake - that is what the derivation's src uses below. To track main or bump the version,
+    # change the ref here: nix flake update strata
     #   strata = github:Niko1221/Strata/v0.1.x
     #   strata = github:Niko1221/Strata/main
-    strata = { url = "github:Niko1221/Strata/v0.1.37"; flake = false; };
+    # named strataSrc so it does not shadow the `strata` derivation built from it (referencing it
+    # by this name from inside the derivation would be self-recursive)
+    strataSrc = { url = "github:Niko1221/Strata/v0.1.37"; flake = false; };
     # the HIP target list the engine is compiled for, read from nix/config.json. Override it for
     # your card with any of:
     #   nix build .#strata --override-input strata-config path:./nix/config.gfx1100.json
@@ -20,7 +23,7 @@
     strata-config = { url = "path:./nix/config.json"; flake = false; };
   };
 
-  outputs = { self, nixpkgs, strata, strata-config }:
+  outputs = { self, nixpkgs, strataSrc, strata-config }:
   let
     lib = nixpkgs.lib;
     pkgs = import nixpkgs { system = "x86_64-linux"; };
@@ -221,7 +224,7 @@
     strata = pkgs.stdenv.mkDerivation {
       pname = "strata";
       inherit version;
-      src = strata;   # the github:Niko1221/Strata input (v0.1.37, flake = false)
+      src = strataSrc;   # the github:Niko1221/Strata input (v0.1.37, flake = false)
 
       nativeBuildInputs = [ pkgs.cmake pkgs.ninja ];
       # stdenv skips its default configure (it would run cmake with no flags and hit the network
