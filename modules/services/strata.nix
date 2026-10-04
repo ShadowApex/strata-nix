@@ -64,11 +64,12 @@ in
     };
 
     hipArchs = lib.mkOption {
-      type = types.str;
-      default = "gfx1100;gfx1151;gfx1201";
-      description = "The HIP target list the default package is compiled for (semicolon-separated);
-        only used to build the default package, so override services.strata.package instead when the
-        machine's card is a different one.";
+      type = types.listOf types.str;
+      default = [ "gfx1100" "gfx1151" "gfx1201" ];   # the package's own default
+      example = [ "gfx1100" "gfx1201" ];
+      description = "The HIP target list the default package is compiled for, one architecture per
+        entry; only used to build the default package, so override services.strata.package instead when
+        the machine's card is a different one.";
     };
 
     port = lib.mkOption {

@@ -18,21 +18,8 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs",
-        "strata-config": "strata-config"
+        "nixpkgs": "nixpkgs"
       }
-    },
-    "strata-config": {
-      "flake": false,
-      "locked": {
-        "path": "./pkgs/by-name/st/strata/config.json",
-        "type": "path"
-      },
-      "original": {
-        "path": "./pkgs/by-name/st/strata/config.json",
-        "type": "path"
-      },
-      "parent": []
     }
   },
   "root": "root",

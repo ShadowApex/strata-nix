@@ -14,7 +14,7 @@ Detailed notes (what's in the package, the architecture list, what was verified)
 ## Requirements
 
 - Linux, `x86_64`, Nix with flakes enabled
-- An AMD GPU whose HIP architecture is in the target list (default `gfx1100;gfx1151;gfx1201`)
+- An AMD GPU whose HIP architecture is in the target list (default `gfx1100`, `gfx1151`, `gfx1201`)
 - Disk for the pinned model + checkpoint shards (~120 GB of downloads during the build)
 
 ## Build
@@ -24,12 +24,12 @@ nix build .#strata            # ~2 minutes of compile on a 16-core PC (downloads
 nix run .#strata -- --help    # the engine's usage, from the store
 ```
 
-For a different card, override the architecture list:
+For a different card, `hipArchs` is a `callPackage` parameter of the package, default
+`[ "gfx1100" "gfx1151" "gfx1201" ]`. Change that default in
+`pkgs/by-name/st/strata/package.nix`, or override it for a single build:
 
 ```sh
-nix build .#strata --override-input strata-config path:./pkgs/by-name/st/strata/config.gfx1100.json
-echo '{"hipArchs": "gfx1100;gfx1201"}' > /tmp/archs.json
-nix build .#strata --override-input strata-config path:/tmp/archs.json
+nix build --impure --expr '(import <nixpkgs> { system = "x86_64-linux"; }).callPackage ./pkgs/by-name/st/strata/package.nix { hipArchs = [ "gfx1100" "gfx1201" ]; }'
 ```
 
 The chosen list is recorded in the package's `bin/BUILD.json`.
@@ -61,8 +61,8 @@ first when a card is not found.
         strata-nix.nixosModules.strata
         {
           services.strata.enable = true;
-          services.strata.hipArchs = "gfx1100;gfx1151;gfx1201";   # the card in the machine
-          services.strata.apiKey = "a long random secret";         # or null + environment.STRATA_API_KEY
+          services.strata.hipArchs = [ "gfx1100" "gfx1151" "gfx1201" ];   # the card in the machine
+          services.strata.apiKey = "a long random secret";              # or null + environment.STRATA_API_KEY
         };
       ];
     };
@@ -79,10 +79,9 @@ itself is a read-only store path.
 
 | Path | What it is |
 | --- | --- |
-| `flake.nix` | Picks the HIP architecture list and `callPackage`s the package; exposes `nixosModules.strata` |
-| `pkgs/by-name/st/strata/package.nix` | The source pin, the build, the config the server reads |
+| `flake.nix` | `callPackage`s the package; exposes `nixosModules.strata` |
+| `pkgs/by-name/st/strata/package.nix` | The source pin, the build, the config the server reads; `hipArchs` is its parameter, default `[ "gfx1100" "gfx1151" "gfx1201" ]` |
 | `pkgs/by-name/st/strata/hip_backend.cmake` | Adds `gfx1151`/`gfx1150` to the tagged source's arch list |
 | `pkgs/by-name/st/strata/llama.cpp.nix` | Pinned llama.cpp (source only) used as `-DSTRATA_GGML_DIR` |
-| `pkgs/by-name/st/strata/config*.json` | The default `hipArchs` (overridable as a flake input) |
-| `modules/services/strata.nix` | The `services.strata` NixOS module |
+| `modules/services/strata.nix` | The `services.strata` NixOS module (`services.strata.hipArchs` is a list of archs) |
 | `docs/NIX.md` | Full notes |

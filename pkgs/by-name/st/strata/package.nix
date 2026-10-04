@@ -1,10 +1,10 @@
 # Strata: the inference engine (HIP) and its Python server, with the IQ2_XS model, its derived
 # tokenizer and the MTP draft layer, every download a pinned fetchurl - one self-contained store path.
 #
-# This is the package definition; the flake callPackages it (flake.nix). The source is fetched here,
-# not passed in: the only thing a package.nix cannot know on its own comes from a flake input:
-#   hipArchs the HIP target list (input strata-config, default config.json beside this package)
-# Everything else - the source pin, the build, the config the server reads - lives here.
+# This is the package definition; the flake callPackages it (flake.nix). Everything - the source pin,
+# the build, the config the server reads - lives here. The one thing the caller may choose is the
+# HIP target list, the hipArchs parameter below (default [ "gfx1100" "gfx1151" "gfx1201" ]):
+#   pkgs.callPackage path/to/package.nix { hipArchs = [ "gfx1100" "gfx1201" ]; }
 
 {
   lib,
@@ -19,13 +19,17 @@
   stdenvNoCC,
   rocmPackages,
   python3,
-  hipArchs,
+  hipArchs ? [ "gfx1100" "gfx1151" "gfx1201" ],
 }:
 let
   rocm = rocmPackages;
 
   version = "0.1.37";   # setup.py's MIN_ENGINE: the engine this package builds
-  archList = lib.splitString ";" hipArchs;
+  # The target list as a list. A semicolon-separated string is accepted too, which is what the
+  # NixOS module's services.strata.hipArchs passes.
+  archList = if builtins.typeOf hipArchs == "string" then lib.splitString ";" hipArchs else hipArchs;
+  # CMake takes the list as one argument with the ";" separator
+  archString = lib.concatStringsSep ";" archList;
 
   # The source, fetched from GitHub at the tag matching this package's version. The hash is the
   # unpacked archive's, so a version bump (or a change to the tag) means re-pinning it - the first
@@ -39,7 +43,7 @@ let
 
   # The tagged v0.1.37 hip_backend.cmake only accepts gfx1100/gfx1101/gfx1200/gfx1201 (unvalidated:
   # gfx1102;gfx1030); the support for gfx1151 (Radeon 8060S) and gfx1150 (Radeon 890M) this package's
-  # default config.json targets landed upstream after the tag. This repository therefore carries the
+  # default hipArchs targets landed upstream after the tag. This repository therefore carries the
   # patched file (hip_backend.cmake, beside this package - identical to the tag's apart from adding
   # those two archs to _strata_hip_unvalidated) and the source is the fetchFromGitHub archive with that
   # one file replaced; the hash pin on the tag keeps the rest of the source. When the patch is
@@ -223,9 +227,9 @@ let
     # the HIP driver (ROCm clang with the ROCm environment wired up) for the .cu sources
     # the package's hip_backend.cmake relabels to the HIP language
     "-DCMAKE_HIP_COMPILER=${rocm.clr}/bin/amdclang++"
-    # the target list from the flake input; shell-quoted because the ";" list separator is a bash command
-    # separator in buildPhase
-    "-DCMAKE_HIP_ARCHITECTURES='${hipArchs}'"
+    # the target list (the hipArchs parameter); shell-quoted because the ";" list separator is a bash
+    # command separator in buildPhase
+    "-DCMAKE_HIP_ARCHITECTURES='${archString}'"
     # llama.cpp from the store instead of a FetchContent network fetch
     "-DSTRATA_GGML_DIR=${llamaCpp}"
   ];
@@ -345,7 +349,7 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   meta = with lib; {
-    description = "The Strata inference engine (HIP for ${hipArchs}) and its Python server, with the IQ2_XS model (~67 GB), its derived tokenizer and the MTP draft layer (28 pinned checkpoint shards, ~55 GB): one self-contained store path to serve";
+    description = "The Strata inference engine (HIP for ${archString}) and its Python server, with the IQ2_XS model (~67 GB), its derived tokenizer and the MTP draft layer (28 pinned checkpoint shards, ~55 GB): one self-contained store path to serve";
     homepage = "https://github.com/Niko1221/Strata";
     license = licenses.mit;
     platforms = [ "x86_64-linux" ];
