@@ -14,7 +14,6 @@
   fetchurl,
   fetchFromGitHub,
   linkFarm,
-  runCommand,
   writeTextFile,
   stdenvNoCC,
   rocmPackages,
@@ -43,19 +42,10 @@ let
 
   # The tagged v0.1.37 hip_backend.cmake only accepts gfx1100/gfx1101/gfx1200/gfx1201 (unvalidated:
   # gfx1102;gfx1030); the support for gfx1151 (Radeon 8060S) and gfx1150 (Radeon 890M) this package's
-  # default hipArchs targets landed upstream after the tag. This repository therefore carries the
-  # patched file (hip_backend.cmake, beside this package - identical to the tag's apart from adding
-  # those two archs to _strata_hip_unvalidated) and the source is the fetchFromGitHub archive with that
-  # one file replaced; the hash pin on the tag keeps the rest of the source. When the patch is
-  # upstreamed, remove the overlay and re-pin the fetchFromGitHub hash.
-  strataPatched = runCommand "strata-src-with-hip-patch" {} ''
-    # $src is a read-only store path, so copy writable, swap the one file in, and move the result
-    cp -a ${src} $out.tmp
-    find $out.tmp -type d -exec chmod u+w {} +
-    rm $out.tmp/cmake/hip_backend.cmake
-    cp ${./hip_backend.cmake} $out.tmp/cmake/hip_backend.cmake
-    mv $out.tmp $out
-  '';
+  # default hipArchs targets landed upstream after the tag. hip_backend.patch (beside this package) is
+  # the diff between the tag's file and the version this repository carries - it adds those two archs to
+  # _strata_hip_unvalidated - and stdenv applies it to the unpacked source in patchPhase, so the build
+  # runs from the patched tree. When the patch is upstreamed, drop it and nothing else changes.
 
   # llama.cpp pinned at the commit CMakeLists.txt's FetchContent default uses (setup.py's
   # LLAMA_CPP_COMMIT and third_party/ggml/VERSION.txt record the same id). -DSTRATA_GGML_DIR points
@@ -237,7 +227,9 @@ in
 stdenv.mkDerivation (finalAttrs: {
   pname = "strata";
   inherit version;
-  src = strataPatched;   # the GitHub fetch with the post-tag gfx1151/gfx1150 HIP patch applied
+  inherit src;
+  # the post-tag gfx1151/gfx1150 HIP archs, applied to the unpacked source by patchPhase (-p1)
+  patches = [ ./hip_backend.patch ];
 
   nativeBuildInputs = [ cmake ninja ];
   # stdenv skips its default configure (it would run cmake with no flags and hit the network
@@ -257,9 +249,14 @@ stdenv.mkDerivation (finalAttrs: {
   env.ROCM_PATH = rocm.clr;
   # llama.cpp's gguf-py (tools/_paths.py finds it through this variable)
   env.STRATA_GGUF_PY = "${llamaCpp}/gguf-py";
+  # the build-time tools now run inside the unpacked tree, so without this they leave a __pycache__
+  # there and installPhase copies it into the output
+  env.PYTHONDONTWRITEBYTECODE = "1";
 
+  # the patched tree: patchPhase runs on the copy stdenv unpacks, so the build works in it (the store
+  # path $src itself is read-only and unpatched)
   buildPhase = ''
-    cmake -S $src -B build -G Ninja ${cmakeFlags}
+    cmake -S . -B build -G Ninja ${cmakeFlags}
     ninja -C build strata strata-device
 
     # ---- the IQ2_XS pack. tools/iq_pack.py reads every shard beside --gguf (the shards keep their
@@ -272,7 +269,7 @@ stdenv.mkDerivation (finalAttrs: {
     #                              --resident-experts (and --mmap-experts) read at run time
     mkdir -p $out/models/IQ2_XS
     cp ${modelData}/* $out/models/IQ2_XS/
-    ${toolsPython}/bin/python3 $src/tools/iq_pack.py \
+    ${toolsPython}/bin/python3 tools/iq_pack.py \
       --gguf "$out/models/IQ2_XS/${s1}" --out $out/pack/iq2xs --experts-bin
 
     # ---- the MTP draft layer (speculative decoding; strata --serve needs it): the ~5 GB of MTP
@@ -281,21 +278,21 @@ stdenv.mkDerivation (finalAttrs: {
     mkdir -p $TMPDIR/mtp
     ${toolsPython}/bin/python3 ${mtpLocal} \
       ${mtpData}/model.safetensors.index.json $TMPDIR/mtp \
-      "$(ls ${mtpData}/model-00*.safetensors)" $src/tools
-    ${toolsPython}/bin/python3 $src/tools/mtp_pack.py --src $TMPDIR/mtp --experts q2_0 \
+      "$(ls ${mtpData}/model-00*.safetensors)" tools
+    ${toolsPython}/bin/python3 tools/mtp_pack.py --src $TMPDIR/mtp --experts q2_0 \
       --out $TMPDIR/mtp/mtp-q2_0.gguf
-    ${toolsPython}/bin/python3 $src/tools/mtp_rt.py --gguf $TMPDIR/mtp/mtp-q2_0.gguf --out $out/mtp/rt
+    ${toolsPython}/bin/python3 tools/mtp_rt.py --gguf $TMPDIR/mtp/mtp-q2_0.gguf --out $out/mtp/rt
 
     # ---- the data files the config points at
     mkdir -p $out/data
-    cp $src/data/draft_vocab.bin $out/mtp/rt/draft_vocab.bin
-    cp $src/data/expert-profile.bin $out/data/
+    cp data/draft_vocab.bin $out/mtp/rt/draft_vocab.bin
+    cp data/expert-profile.bin $out/data/
   '';
 
   installPhase = ''
     mkdir -p $out/bin $out/etc/strata
     # the server runs from the stored tree: serve/server.py's ROOT is the directory holding serve/
-    cp -a $src/serve $src/tools $src/chat.py $src/requirements.txt $out/
+    cp -a serve tools chat.py requirements.txt $out/
     for exe in strata strata-device; do
       install -m 755 build/$exe $out/bin/$exe
     done

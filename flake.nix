@@ -18,9 +18,9 @@
     # applies; for another card, change the default there or callPackage it yourself:
     #   pkgs.callPackage ./pkgs/by-name/st/strata/package.nix { hipArchs = [ "gfx1100" "gfx1201" ]; };
     # In a NixOS configuration the service module's services.strata.hipArchs does the same. The list is
-    # validated by the package's hip_backend.cmake (gfx1100 + gfx1201 maintainer-validated, gfx1101 +
-    # gfx1200 community-validated, the rest build with a warning; docs/AMD_HIP.md), and is recorded in
-    # the package's bin/BUILD.json.
+    # validated by the package's hip_backend.cmake as patched by hip_backend.patch (gfx1100 + gfx1201
+    # maintainer-validated, gfx1101 + gfx1200 community-validated, the rest build with a warning;
+    # docs/AMD_HIP.md), and is recorded in the package's bin/BUILD.json.
     strata = pkgs.callPackage ./pkgs/by-name/st/strata/package.nix { };
   in
   {
