@@ -23,7 +23,7 @@
 let
   rocm = rocmPackages;
 
-  version = "0.1.37";   # setup.py's MIN_ENGINE: the engine this package builds
+  version = "0.1.38";   # setup.py's MIN_ENGINE: the engine this package builds
   # The target list as a list. A semicolon-separated string is accepted too, which is what the
   # NixOS module's services.strata.hipArchs passes.
   archList = if builtins.typeOf hipArchs == "string" then lib.splitString ";" hipArchs else hipArchs;
@@ -37,15 +37,15 @@ let
     owner = "Niko1221";
     repo = "Strata";
     rev = "v${version}";
-    hash = "sha256-0so8fFampbUIvWmYQPKr3MzHH0lB6kCtluxWe/erves=";
+    hash = "sha256-9tawklXlF98yolRTVgeonVcyrob8HiNG3xSQ7V5v+94=";
   };
 
-  # The tagged v0.1.37 hip_backend.cmake only accepts gfx1100/gfx1101/gfx1200/gfx1201 (unvalidated:
-  # gfx1102;gfx1030); the support for gfx1151 (Radeon 8060S) and gfx1150 (Radeon 890M) this package's
-  # default hipArchs targets landed upstream after the tag. hip_backend.patch (beside this package) is
-  # the diff between the tag's file and the version this repository carries - it adds those two archs to
-  # _strata_hip_unvalidated - and stdenv applies it to the unpacked source in patchPhase, so the build
-  # runs from the patched tree. When the patch is upstreamed, drop it and nothing else changes.
+  # The tagged hip_backend.cmake (unchanged since v0.1.37) only accepts gfx1100/gfx1101/gfx1200/gfx1201
+  # (unvalidated: gfx1102;gfx1030); the support for gfx1151 (Radeon 8060S) and gfx1150 (Radeon 890M) this
+  # package's default hipArchs targets landed upstream after the tag. hip_backend.patch (beside this
+  # package) is the diff between the tag's file and the version this repository carries - it adds those
+  # two archs to _strata_hip_unvalidated - and stdenv applies it to the unpacked source in patchPhase, so
+  # the build runs from the patched tree. When the patch is upstreamed, drop it and nothing else changes.
 
   # llama.cpp pinned at the commit CMakeLists.txt's FetchContent default uses (setup.py's
   # LLAMA_CPP_COMMIT and third_party/ggml/VERSION.txt record the same id). -DSTRATA_GGML_DIR points

@@ -74,8 +74,8 @@ serve/ tools/ chat.py requirements.txt   the upstream Python tree, run from the 
 - `hipArchs` is the only caller-visible knob (a list, or a `;`-joined string). It
   is validated by the package's `cmake/hip_backend.cmake` as patched —
   unvalidated archs build with a warning — and is recorded in `bin/BUILD.json`.
-- `hip_backend.patch` is a temporary divergence from the `v0.1.37` tag. When it
-  lands upstream, drop the patch and nothing else changes.
+- `hip_backend.patch` is a temporary divergence from the tagged source (unchanged since
+  `v0.1.37`). When it lands upstream, drop the patch and nothing else changes.
 - `llama.cpp.nix` is `import`ed directly. That is fine here, but a nixpkgs
   `by-name` package may only use its function arguments, so it would have to
   become its own `by-name` entry to be upstreamed.

@@ -15,6 +15,10 @@
 # The API key is a secret: putting it in the Nix config puts it in the store. A machine that keeps the
 # key out of its configuration sets environment.STRATA_API_KEY some other way and leaves
 # services.strata.apiKey null - the server reads the variable when there is no --api-key.
+#
+# Without a key the server answers only requests whose Host is a loopback name (v0.1.38's DNS-rebinding
+# protection), so a keyless service reached under another name needs extraConfig.allowed_hosts =
+# [ "that.name" ]; with a key the check is off.
 
 { config, lib, pkgs, ... }:
 
@@ -132,9 +136,9 @@ in
     extraConfig = lib.mkOption {
       type = types.attrsOf types.anything;
       default = {};
-      example = { api_monitor = true; idle_unload_s = 300; sampling.temperature = 0.7; };
+      example = { api_monitor = true; idle_unload_s = 300; allowed_hosts = [ "that.name" ]; };
       description = "Anything else the server's config accepts (sampling, aliases, mcp_servers,
-        cors_origins, engine_silence_s, ...), merged into the generated config.";
+        cors_origins, allowed_hosts, engine_silence_s, ...), merged into the generated config.";
     };
 
     extraArgs = lib.mkOption {

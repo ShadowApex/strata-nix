@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     # the project source is not an input: the package fetches it itself with pkgs.fetchFromGitHub,
-    # pinned to the v0.1.37 tag (setup.py's MIN_ENGINE, the `version` in the package). To track main
+    # pinned to the v0.1.38 tag (setup.py's MIN_ENGINE, the `version` in the package). To track main
     # or bump the version, change the fetch in pkgs/by-name/st/strata/package.nix.
   };
 

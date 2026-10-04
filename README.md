@@ -44,6 +44,10 @@ curl http://127.0.0.1:8080/health | python3 -m json.tool
 (`--port`, `--host`, `--api-key`, `--gpu 0,1`, `--config <file>`). To serve other devices, use
 `--host 0.0.0.0` **together with** `--api-key <a long random secret>`.
 
+Without an API key the server answers only requests whose `Host` is a loopback name (v0.1.38's
+DNS-rebinding protection); reaching it under another name needs `allowed_hosts` in the config or in
+`STRATA_ALLOWED_HOSTS`.
+
 The engine alone is `$P/bin/strata`; the device probe is `$P/bin/strata-device --list-devices` — run it
 first when a card is not found.
 
