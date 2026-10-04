@@ -24,7 +24,8 @@
 # strata-vision (the CPU image encoder for this backend) once and keeps it resident. extraConfig =
 # { vision = null; } turns that off for this machine, and --lazy must stay out of extraArgs - the server
 # refuses lazy loading while vision is configured. The encoder writes the pictures it encodes to a temp
-# directory, which is writable; the store path itself is not.
+# directory, so the unit gets a private writable /tmp: ProtectSystem=strict makes everything else
+# read-only, and the store path the server runs from is no substitute.
 
 {
   config,
@@ -272,6 +273,10 @@ in
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
+        # strict makes the whole hierarchy read-only, so the service needs its own writable /tmp: the
+        # image encoder creates its cache directory with tempfile.mkdtemp(), which falls back to the
+        # process's cwd - the read-only store path - when /tmp is not writable.
+        PrivateTmp = true;
         ReadWritePaths = [ cfg.stateDir ];
       };
     };
