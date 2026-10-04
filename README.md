@@ -9,8 +9,6 @@ One store path contains the engine, the Python server, the IQ2_XS model, its der
 MTP draft layer; every download is a hash-pinned `fetchurl`, so the build is reproducible and needs no
 network at configure time.
 
-Detailed notes (what's in the package, the architecture list, what was verified): [docs/NIX.md](docs/NIX.md).
-
 ## Requirements
 
 - Linux, `x86_64`, Nix with flakes enabled
@@ -84,4 +82,3 @@ itself is a read-only store path.
 | `pkgs/by-name/st/strata/hip_backend.cmake` | Adds `gfx1151`/`gfx1150` to the tagged source's arch list |
 | `pkgs/by-name/st/strata/llama.cpp.nix` | Pinned llama.cpp (source only) used as `-DSTRATA_GGML_DIR` |
 | `modules/services/strata.nix` | The `services.strata` NixOS module (`services.strata.hipArchs` is a list of archs) |
-| `docs/NIX.md` | Full notes |
