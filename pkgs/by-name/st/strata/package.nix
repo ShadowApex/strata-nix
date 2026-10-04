@@ -382,8 +382,11 @@ stdenv.mkDerivation (finalAttrs: {
     # machine: 32 GB of RAM + 32 GB of VRAM (gfx1151) runs IQ2_XS in the low-RAM resident mode -
     # the experts the GPU does not hold live in RAM, the 26.8 GB PLE table stays on disk. The KV
     # cache is int8 at the full 131072-token context.
-    # "vision" turns the server's image support on (chat.py's /image, OpenAI image_url parts, Anthropic
-    # image blocks). It is the image encoder on the CPU, since the AMD backend has no GPU one upstream.
+    # Images need both halves, as setup.py writes them: the "vision" section makes the server spawn the
+    # encoder (chat.py's /image, OpenAI image_url parts, Anthropic image blocks), and "--vision" in args is
+    # what makes the engine accept the GENI requests it sends - without the flag the engine answers "this
+    # engine was started without --vision". It is the image encoder on the CPU, since the AMD backend has no
+    # GPU one upstream.
     # "model" is the text model the encoder opens vocab-only for the image positions: shard 1, with shard 2
     # beside it under its original name, which is how llama.cpp resolves a split GGUF. No "threads": the
     # encoder takes half the cores, what setup.py writes for a CPU encoder, and this package cannot know the
@@ -403,7 +406,8 @@ stdenv.mkDerivation (finalAttrs: {
         "--mtp", "@OUT@/mtp/rt",
         "--max-context", "131072",
         "--kv", "int8",
-        "--resident-experts"
+        "--resident-experts",
+        "--vision"
       ],
       "cwd": "@OUT@",
       "tokenizer": "@OUT@/pack/iq2xs/tokenizer",

@@ -72,6 +72,9 @@ serve/ tools/ chat.py requirements.txt   the upstream Python tree, run from the 
   context and cannot be written back out).
 - `etc/strata/strata.json` is read with plain `json.loads`, so nothing in it may
   be a comment; the explanation of the `vision` section lives in the Nix source.
+- Images need both halves of the config, as `setup.py` writes them: the `vision` section makes the server
+  spawn the encoder, and `--vision` in `args` is what makes the engine accept the `GENI` requests it sends.
+  The server passes the config's `args` unchanged, so the flag belongs in the package's file.
 - The image encoder is CPU-only for this backend: upstream has no GPU vision
   encoder for HIP (`setup.py`'s `hip_vision()` answers "images off, or
   `--vision cpu`"). It is a second CMake project, `tools/vision`, built against

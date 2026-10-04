@@ -53,8 +53,9 @@ first when a card is not found.
 
 ## Images
 
-The package's `etc/strata/strata.json` carries a `vision` entry, so the server encodes pictures: OpenAI
-`image_url` parts, Anthropic image blocks and `chat.py`'s `/image <path>` go through
+The package's `etc/strata/strata.json` carries a `vision` entry and `--vision` in the engine's args, so the
+server encodes pictures: OpenAI `image_url` parts, Anthropic image blocks and `chat.py`'s `/image <path>` go
+through
 `$P/bin/strata-vision` (llama.cpp's mtmd over `$P/vision/mmproj-Qwen3.8-Flash-Next-BF16.gguf`, ~0.9 GB)
 and its rows reach the engine at the prompt's image pad tokens. Each picture is cached by its hash, so a
 conversation that sends the same image again encodes it once.
@@ -65,7 +66,9 @@ config names no `threads`, and `max_tokens` is 300, the value `setup.py` writes 
 model wants 1024 for grounding tasks, so raise it in the config if you use bounding boxes.
 
 Turn images off by making `vision` null in the config the server reads, and keep `--lazy` out of the
-flags: the server refuses lazy loading when the config has a `vision` entry.
+flags: the server refuses lazy loading when the config has a `vision` entry. `--vision` stays in the engine's
+args, where it is harmless without an encoder; drop it with `engineArgs` if you want the engine exactly as
+setup.py would have written it for a text-only install.
 
 The encoder writes the pictures it encodes to a temp directory (`$TMPDIR`), which is writable; the store
 path itself is read-only, so `stateDir` remains the only place the service writes.

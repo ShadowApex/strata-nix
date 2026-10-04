@@ -20,7 +20,8 @@
 # protection), so a keyless service reached under another name needs extraConfig.allowed_hosts =
 # [ "that.name" ]; with a key the check is off.
 #
-# Images are on because the package's config has a "vision" entry: the server spawns the package's
+# Images are on because the package's config has a "vision" entry (and "--vision" in its args, which is what
+# lets the engine accept the encoder's requests): the server spawns the package's
 # strata-vision (the CPU image encoder for this backend) once and keeps it resident. extraConfig =
 # { vision = null; } turns that off for this machine, and --lazy must stay out of extraArgs - the server
 # refuses lazy loading while vision is configured. The encoder writes the pictures it encodes to a temp
