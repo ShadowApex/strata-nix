@@ -1,6 +1,11 @@
 # Strata: the inference engine (HIP) and its Python server, with the IQ2_XS model, its derived
-# tokenizer, the MTP draft layer and the image encoder, every download a pinned fetchurl - one
-# self-contained store path.
+# tokenizer, the MTP draft layer and the image encoder, every download a pinned fetchurl.
+#
+# One derivation per stage, so the expensive stages are cached on their own. The pack and the MTP draft
+# layer read only the pinned downloads and the tools scripts - no ROCm, no CMake, no HIP target list -
+# so changing hipArchs rebuilds the engine alone, not the 6.5 minutes of pack work. The package is the
+# assembly: real content for the Python tree the server runs from, symlinks into the store paths the
+# other stages produce. Its closure is the whole package.
 #
 # This is the package definition; the flake callPackages it (flake.nix). Everything - the source pin,
 # the build, the config the server reads - lives here. The one thing the caller may choose is the
@@ -10,13 +15,14 @@
 {
   lib,
   stdenv,
+  stdenvNoCC,
+  runCommand,
   cmake,
   ninja,
   fetchurl,
   fetchFromGitHub,
   linkFarm,
   writeTextFile,
-  stdenvNoCC,
   rocmPackages,
   python3,
   hipArchs ? [
@@ -58,7 +64,9 @@ let
   # gguf-py/ (the Python GGUF reader) is what the build-time tools below import through STRATA_GGUF_PY.
   # The repo's own module, now beside this package (llama.cpp.nix); this whole directory is what would
   # have to move if this package were upstreamed to nixpkgs.
-  llamaCpp = import ./llama.cpp.nix { inherit fetchurl stdenvNoCC; };
+  llamaCpp = import ./llama.cpp.nix {
+    inherit fetchurl stdenvNoCC;
+  };
 
   # The server's non-stdlib imports (serve/ and tools/strata_tokenizer.py): jinja2 (chat templates),
   # regex (the tokenizer), psutil (RAM telemetry), pillow (the image formats the image encoder's decoder
@@ -291,93 +299,118 @@ let
     "-DSTRATA_PORTABLE=ON"
     "-DMTMD_VIDEO=OFF"
   ];
+
+  # ---- the engine: the only stage the HIP target list reaches ------------------------------------
+  engine = stdenv.mkDerivation {
+    pname = "strata-engine";
+    inherit version src;
+    # the post-tag gfx1151/gfx1150 HIP archs, applied to the unpacked source by patchPhase (-p1)
+    patches = [ ./hip_backend.patch ];
+    nativeBuildInputs = [
+      cmake
+      ninja
+    ];
+    # stdenv skips its default configure (it would run cmake with no flags and hit the network
+    # FetchContent): everything happens in buildPhase
+    configurePhase = "true";
+    buildPhase = ''
+      cmake -S . -B build -G Ninja ${cmakeFlags}
+      ninja -C build strata strata-device
+    '';
+    installPhase = ''
+      mkdir -p $out/bin
+      for exe in strata strata-device; do
+        install -m 755 build/$exe $out/bin/$exe
+      done
+    '';
+    propagatedBuildInputs = rocmLibs;
+  };
+
+  # ---- the image encoder: no HIP target list, so a change to hipArchs does not rebuild it. The patch
+  # above only touches cmake/hip_backend.cmake, so the unpatched source is enough here.
+  visionBin = stdenv.mkDerivation {
+    pname = "strata-vision-engine";
+    inherit version src;
+    nativeBuildInputs = [
+      cmake
+      ninja
+    ];
+    configurePhase = "true";
+    buildPhase = ''
+      cmake -S tools/vision -B build-vision -G Ninja ${visionCmakeFlags}
+      ninja -C build-vision strata-vision
+    '';
+    installPhase = ''
+      mkdir -p $out/bin
+      install -m 755 build-vision/bin/strata-vision $out/bin/strata-vision
+    '';
+  };
+
+  # ---- the IQ2_XS pack: the pinned shards and the tools scripts, nothing else. The tools run from the
+  # read-only store path, so they must not leave a __pycache__ there.
+  pack =
+    runCommand "strata-pack-iq2xs"
+      {
+        nativeBuildInputs = [ toolsPython ];
+        buildInputs = [ modelData ];
+        env.STRATA_GGUF_PY = "${llamaCpp}/gguf-py";
+        env.PYTHONDONTWRITEBYTECODE = "1";
+      }
+      ''
+        # tools/iq_pack.py reads every shard beside --gguf (the shards keep their original names), derives
+        # the tokenizer from the GGUF metadata (tools/strata_tokenizer.py: vocab, merges, the chat template
+        # into tokenizer/), and writes index.txt / dense.bin / native_experts.txt / experts.bin (the 35.5 GB
+        # of quantized experts the low-RAM resident mode reads at run time).
+        ${toolsPython}/bin/python3 ${src}/tools/iq_pack.py \
+          --gguf ${modelData}/${s1} --out $out --experts-bin
+      '';
+
+  # ---- the MTP draft layer: the pinned checkpoint shards and the tools scripts, nothing else
+  mtp =
+    runCommand "strata-mtp-rt"
+      {
+        nativeBuildInputs = [ toolsPython ];
+        buildInputs = [ mtpData ];
+        env.STRATA_GGUF_PY = "${llamaCpp}/gguf-py";
+        env.PYTHONDONTWRITEBYTECODE = "1";
+      }
+      ''
+        # the ~5 GB of MTP tensors out of the 28 pinned checkpoint shards, every tensor checked against
+        # tools/mtp_fetch.py's pinned SHA256 table, then packed Q2_0 and relaid out for the engine
+        ${toolsPython}/bin/python3 ${mtpLocal} \
+          ${mtpData}/model.safetensors.index.json $TMPDIR/mtp \
+          "$(ls ${mtpData}/model-00*.safetensors)" ${src}/tools
+        ${toolsPython}/bin/python3 ${src}/tools/mtp_pack.py --src $TMPDIR/mtp --experts q2_0 \
+          --out $TMPDIR/mtp/mtp-q2_0.gguf
+        ${toolsPython}/bin/python3 ${src}/tools/mtp_rt.py --gguf $TMPDIR/mtp/mtp-q2_0.gguf --out $out
+        cp ${src}/data/draft_vocab.bin $out/draft_vocab.bin
+      '';
 in
-stdenv.mkDerivation (finalAttrs: {
-  pname = "strata";
-  inherit version;
-  inherit src;
-  # the post-tag gfx1151/gfx1150 HIP archs, applied to the unpacked source by patchPhase (-p1)
-  patches = [ ./hip_backend.patch ];
+runCommand "strata-${version}"
+  {
+    meta = with lib; {
+      description = "The Strata inference engine (HIP for ${archString}), its Python server and its image encoder, with the IQ2_XS model (~67 GB), its derived tokenizer, the MTP draft layer (28 pinned checkpoint shards, ~55 GB) and the mmproj vision encoder (~0.9 GB): the assembly of the stage derivations above, whose closure is the whole package";
+      homepage = "https://github.com/Niko1221/Strata";
+      license = licenses.mit;
+      platforms = [ "x86_64-linux" ];
+      # `nix run .#strata -- --help`: the engine's own --help, which prints the usage without a GPU
+      mainProgram = "strata";
+    };
+  }
+  ''
+    # serve/server.py resolves symlinks for its ROOT (Path(__file__).resolve().parents[1]), so the Python
+    # tree it runs from is real content here; only the payloads are links into their own store paths.
+    mkdir -p $out/bin $out/etc/strata $out/models $out/pack $out/mtp $out/data
+    cp -a ${src}/serve ${src}/tools ${src}/chat.py ${src}/requirements.txt $out/
+    ln -s ${modelData} $out/models/IQ2_XS
+    ln -s ${visionData} $out/vision
+    ln -s ${pack} $out/pack/iq2xs
+    ln -s ${mtp} $out/mtp/rt
+    cp ${src}/data/expert-profile.bin $out/data/
+    ln -s ${engine}/bin/strata $out/bin/strata
+    ln -s ${engine}/bin/strata-device $out/bin/strata-device
+    ln -s ${visionBin}/bin/strata-vision $out/bin/strata-vision
 
-  nativeBuildInputs = [
-    cmake
-    ninja
-  ];
-  # stdenv skips its default configure (it would run cmake with no flags and hit the network
-  # FetchContent): everything happens in buildPhase
-  configurePhase = "true";
-  dontFixupPhase = false;
-  # the engine loads libamdhip64 / hsa-runtime64 / the hipBLAS libraries at run time; stdenv patches
-  # their store paths into the binaries' RPATH, so nothing ROCm lives outside this package's closure
-  propagatedBuildInputs = rocmLibs ++ [ python ];
-
-  # ---- the payloads, as linkFarm directories (see mtpData / modelData, above): the IQ2_XS model
-  # (67 GB), plus the MTP draft layer's source, the checkpoint index + the 28 shards holding its
-  # 31 mtp.* tensors (55.17 GB; buildPhase extracts only the ~5 GB of MTP byte ranges, mtpLocal)
-  buildInputs = [
-    mtpData
-    modelData
-    visionData
-  ];
-
-  env.HIP_PLATFORM = "amd";
-  env.ROCM_PATH = rocm.clr;
-  # llama.cpp's gguf-py (tools/_paths.py finds it through this variable)
-  env.STRATA_GGUF_PY = "${llamaCpp}/gguf-py";
-  # the build-time tools now run inside the unpacked tree, so without this they leave a __pycache__
-  # there and installPhase copies it into the output
-  env.PYTHONDONTWRITEBYTECODE = "1";
-
-  # the patched tree: patchPhase runs on the copy stdenv unpacks, so the build works in it (the store
-  # path $src itself is read-only and unpatched)
-  buildPhase = ''
-    cmake -S . -B build -G Ninja ${cmakeFlags}
-    ninja -C build strata strata-device
-
-    # ---- the image encoder (strata-vision): llama.cpp's mtmd over the mmproj, on the CPU. The server
-    # spawns it once and sends it "ENC <image> <output>" lines; each image's embeddings go to the engine.
-    cmake -S tools/vision -B build-vision -G Ninja ${visionCmakeFlags}
-    ninja -C build-vision strata-vision
-
-    # ---- the IQ2_XS pack. tools/iq_pack.py reads every shard beside --gguf (the shards keep their
-    # original names), derives the tokenizer from the GGUF metadata (tools/strata_tokenizer.py:
-    # vocab, merges, the chat template into pack/tokenizer/), and writes:
-    #   index.txt / dense.bin      the dense tensors as the GGUF stores them (engine: --native)
-    #   native_experts.txt         one line per layer: where each expert blob lives (written last:
-    #                              a pack without it is not finished)
-    #   experts.bin                all 35.5 GB of quantized experts in one file: what
-    #                              --resident-experts (and --mmap-experts) read at run time
-    mkdir -p $out/models/IQ2_XS
-    cp ${modelData}/* $out/models/IQ2_XS/
-    ${toolsPython}/bin/python3 tools/iq_pack.py \
-      --gguf "$out/models/IQ2_XS/${s1}" --out $out/pack/iq2xs --experts-bin
-
-    # ---- the MTP draft layer (speculative decoding; strata --serve needs it): the ~5 GB of MTP
-    # tensors out of the 28 pinned checkpoint shards (mtpData, above), every tensor checked
-    # against tools/mtp_fetch.py's pinned SHA256 table, then packed Q2_0, relaid out for the engine
-    mkdir -p $TMPDIR/mtp
-    ${toolsPython}/bin/python3 ${mtpLocal} \
-      ${mtpData}/model.safetensors.index.json $TMPDIR/mtp \
-      "$(ls ${mtpData}/model-00*.safetensors)" tools
-    ${toolsPython}/bin/python3 tools/mtp_pack.py --src $TMPDIR/mtp --experts q2_0 \
-      --out $TMPDIR/mtp/mtp-q2_0.gguf
-    ${toolsPython}/bin/python3 tools/mtp_rt.py --gguf $TMPDIR/mtp/mtp-q2_0.gguf --out $out/mtp/rt
-
-    # ---- the data files the config points at
-    mkdir -p $out/data
-    cp data/draft_vocab.bin $out/mtp/rt/draft_vocab.bin
-    cp data/expert-profile.bin $out/data/
-  '';
-
-  installPhase = ''
-    mkdir -p $out/bin $out/etc/strata $out/vision
-    # the server runs from the stored tree: serve/server.py's ROOT is the directory holding serve/
-    cp -a serve tools chat.py requirements.txt $out/
-    for exe in strata strata-device; do
-      install -m 755 build/$exe $out/bin/$exe
-    done
-    install -m 755 build-vision/bin/strata-vision $out/bin/strata-vision
-    cp ${visionData}/* $out/vision/
     # the config shape setup.py writes (exe, args, cwd, tokenizer, model_name), filled for this
     # machine: 32 GB of RAM + 32 GB of VRAM (gfx1151) runs IQ2_XS in the low-RAM resident mode -
     # the experts the GPU does not hold live in RAM, the 26.8 GB PLE table stays on disk. The KV
@@ -443,14 +476,4 @@ stdenv.mkDerivation (finalAttrs: {
     EOF
     sed -i -e "s|@OUT@|$out|" -e "s|@PY@|${python}|" $out/bin/strata-server
     chmod +x $out/bin/strata-server
-  '';
-
-  meta = with lib; {
-    description = "The Strata inference engine (HIP for ${archString}), its Python server and its image encoder, with the IQ2_XS model (~67 GB), its derived tokenizer, the MTP draft layer (28 pinned checkpoint shards, ~55 GB) and the mmproj vision encoder (~0.9 GB): one self-contained store path to serve";
-    homepage = "https://github.com/Niko1221/Strata";
-    license = licenses.mit;
-    platforms = [ "x86_64-linux" ];
-    # `nix run .#strata -- --help`: the engine's own --help, which prints the usage without a GPU
-    mainProgram = "strata";
-  };
-})
+  ''

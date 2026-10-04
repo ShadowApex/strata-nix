@@ -38,8 +38,10 @@ modules/services/strata.nix        # the services.strata NixOS module (the servi
 README.md                          # build/run/service usage, and the layout table
 ```
 
-The package produces one self-contained store path — engine, Python server, model,
-tokenizer, MTP draft layer, image encoder, ROCm runtime — with this output layout:
+The package is one output whose closure is the whole package — engine, Python server, model,
+tokenizer, MTP draft layer, image encoder, ROCm runtime. It is the assembly: real content for the
+Python tree the server runs from, symlinks into the store paths the stage derivations produce. With
+this output layout:
 
 ```text
 bin/strata            the engine (HIP)
@@ -48,12 +50,12 @@ bin/strata-server     the Python server wrapper
 bin/strata-vision     the image encoder (llama.cpp's mtmd), on the CPU
 bin/BUILD.json        the version, backend, arch list and vision backend actually compiled
 etc/strata/strata.json  the config the server reads
-pack/iq2xs            the packed model and the tokenizer derived from its GGUF metadata
-models/IQ2_XS         the two pinned GGUF shards
-vision/               the pinned mmproj the image encoder reads
-mtp/rt                the packed MTP draft layer
+pack/iq2xs            the packed model and the tokenizer derived from its GGUF metadata (symlink)
+models/IQ2_XS         the two pinned GGUF shards (symlink)
+vision/               the pinned mmproj the image encoder reads (symlink)
+mtp/rt                the packed MTP draft layer (symlink)
 data/expert-profile.bin
-serve/ tools/ chat.py requirements.txt   the upstream Python tree, run from the store
+serve/ tools/ chat.py requirements.txt   the upstream Python tree, run from the store (real copies)
 ```
 
 ## Key Invariants
@@ -66,6 +68,13 @@ serve/ tools/ chat.py requirements.txt   the upstream Python tree, run from the 
   `buildInputs`: stdenv `source`s every bare file there as a setup hook.
 - `configurePhase = "true"` is deliberate. stdenv's default configure would run
   cmake with no flags and hit the network `FetchContent` for llama.cpp.
+- The build is one derivation per stage so the expensive stages cache on their own. The pack and the
+  MTP stage read only the pins, the tools scripts and `toolsPython` — never `hipArchs`, ROCm or CMake —
+  so they stay cached when the target list changes. The engine stage must stay a `stdenv.mkDerivation`
+  with `propagatedBuildInputs = rocmLibs`, which is what patches the RPATH; a `runCommand` would not.
+- The assembly keeps `serve/` and `tools/` as real copies: `serve/server.py` takes
+  `Path(__file__).resolve().parents[1]` as its root, so a symlinked `serve/` would point it at the wrong
+  store path. Only the payloads are links, and the closure still contains them.
 - Store paths inside generated files must be real dependencies, not text. The
   package substitutes `@OUT@`/`@PY@` with `sed`; the service module builds its
   config with `runCommand` (a string read from the store at eval time carries no

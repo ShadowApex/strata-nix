@@ -5,9 +5,14 @@ Anthropic-compatible model server running on one AMD GPU plus system RAM — for
 ROCm 7 (`hipcc` + hipBLAS from `pkgs.rocmPackages`, no TheRock wheels, no ROCm install on the host
 beyond the kernel's `amdgpu` driver).
 
-One store path contains the engine, the Python server, the IQ2_XS model, its derived tokenizer, the MTP
+The package's output holds the engine, the Python server, the IQ2_XS model, its derived tokenizer, the MTP
 draft layer and the image encoder with its mmproj; every download is a hash-pinned `fetchurl`, so the
-build is reproducible and needs no network at configure time.
+build is reproducible and needs no network at configure time. Its closure is the whole package: the big
+payloads are separate stage derivations that the output links to.
+
+The build is one derivation per stage, so the expensive stages are cached on their own. The pack and the
+draft layer read only the pins and the tools scripts — no ROCm, no CMake, no target list — so changing
+`hipArchs` rebuilds the engine alone, not the ~6.5 minutes of pack work.
 
 ## Requirements
 
@@ -31,6 +36,15 @@ nix build --impure --expr '(import <nixpkgs> { system = "x86_64-linux"; }).callP
 ```
 
 The chosen list is recorded in the package's `bin/BUILD.json`.
+
+Because the pack (~4 min) and the draft layer (~2.5 min) are separate derivations, a change to the target
+list rebuilds the engine and the assembly only:
+
+```sh
+nix build --impure --expr '(import <nixpkgs> { system = "x86_64-linux"; }).callPackage ./pkgs/by-name/st/strata/package.nix { hipArchs = [ "gfx1100" ]; }' --dry-run
+```
+
+A change to the assembly alone (the config text, the server wrapper) is a few seconds.
 
 ## Run
 
