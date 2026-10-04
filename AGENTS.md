@@ -39,16 +39,18 @@ README.md                          # build/run/service usage, and the layout tab
 ```
 
 The package produces one self-contained store path — engine, Python server, model,
-tokenizer, MTP draft layer, ROCm runtime — with this output layout:
+tokenizer, MTP draft layer, image encoder, ROCm runtime — with this output layout:
 
 ```text
 bin/strata            the engine (HIP)
 bin/strata-device     the device probe (--list-devices)
 bin/strata-server     the Python server wrapper
-bin/BUILD.json        the version, backend and arch list actually compiled
+bin/strata-vision     the image encoder (llama.cpp's mtmd), on the CPU
+bin/BUILD.json        the version, backend, arch list and vision backend actually compiled
 etc/strata/strata.json  the config the server reads
 pack/iq2xs            the packed model and the tokenizer derived from its GGUF metadata
 models/IQ2_XS         the two pinned GGUF shards
+vision/               the pinned mmproj the image encoder reads
 mtp/rt                the packed MTP draft layer
 data/expert-profile.bin
 serve/ tools/ chat.py requirements.txt   the upstream Python tree, run from the store
@@ -68,6 +70,15 @@ serve/ tools/ chat.py requirements.txt   the upstream Python tree, run from the 
   package substitutes `@OUT@`/`@PY@` with `sed`; the service module builds its
   config with `runCommand` (a string read from the store at eval time carries no
   context and cannot be written back out).
+- `etc/strata/strata.json` is read with plain `json.loads`, so nothing in it may
+  be a comment; the explanation of the `vision` section lives in the Nix source.
+- The image encoder is CPU-only for this backend: upstream has no GPU vision
+  encoder for HIP (`setup.py`'s `hip_vision()` answers "images off, or
+  `--vision cpu`"). It is a second CMake project, `tools/vision`, built against
+  the llama.cpp store path with `-DLLAMA_DIR=` and `MTMD_VIDEO=OFF` (the server
+  sends still images only, so it needs no ffmpeg). Its `model` is shard 1 with
+  shard 2 beside it under the original names, which is how llama.cpp resolves a
+  split GGUF.
 - nixpkgs has no single `/opt/rocm` prefix: each ROCm package is its own store
   path, found through `CMAKE_PREFIX_PATH`, and the HIP compiler is
   `rocm.clr/bin/amdclang++`.

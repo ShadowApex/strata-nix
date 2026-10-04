@@ -1,8 +1,8 @@
 # The Strata service: the engine and its Python server as a systemd unit.
 #
-# The package is self-contained - engine, model, tokenizer, MTP draft layer, ROCm runtime - so the
-# service needs nothing outside its closure except the GPU device nodes (/dev/kfd and /dev/dri) and a
-# writable directory for the engine's cwd. The engine config the server reads is the package's own
+# The package is self-contained - engine, model, tokenizer, MTP draft layer, image encoder, ROCm runtime
+# - so the service needs nothing outside its closure except the GPU device nodes (/dev/kfd and /dev/dri)
+# and a writable directory for the engine's cwd. The engine config the server reads is the package's own
 # etc/strata/strata.json, merged here with the service's settings: the pins stay in the package, the
 # module only adds what a service has to know.
 #
@@ -19,8 +19,19 @@
 # Without a key the server answers only requests whose Host is a loopback name (v0.1.38's DNS-rebinding
 # protection), so a keyless service reached under another name needs extraConfig.allowed_hosts =
 # [ "that.name" ]; with a key the check is off.
+#
+# Images are on because the package's config has a "vision" entry: the server spawns the package's
+# strata-vision (the CPU image encoder for this backend) once and keeps it resident. extraConfig =
+# { vision = null; } turns that off for this machine, and --lazy must stay out of extraArgs - the server
+# refuses lazy loading while vision is configured. The encoder writes the pictures it encodes to a temp
+# directory, which is writable; the store path itself is not.
 
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   cfg = config.services.strata;
@@ -29,30 +40,48 @@ let
   # The config is written at build time, from the package's own file: the package is an input of this
   # derivation, so the store paths inside the config are real dependencies rather than text. (A
   # string read from the store at eval time carries no context and cannot be written back out.)
-  confFile = pkgs.runCommand "strata-service-config.json" {
-    srcs = [ cfg.package ];
-  } ''
-    ${pkgs.jq}/bin/jq -n \
-      --slurpfile base ${cfg.package}/etc/strata/strata.json \
-      --arg cwd "${cfg.stateDir}" \
-      --argjson env '${builtins.toJSON cfg.env}' \
-      --argjson extra '${builtins.toJSON cfg.extraConfig}' \
-      --argjson args '${builtins.toJSON cfg.engineArgs}' \
-      --argjson model '${builtins.toJSON cfg.modelName}' \
-      '$base[0]
-        + { cwd: $cwd, env: (($base[0].env // {}) + $env) }
-        + (if $args != null then { args: $args } else {} end)
-        + (if $model != null then { model_name: $model } else {} end)
-        + $extra' > $out
-  '';
+  confFile =
+    pkgs.runCommand "strata-service-config.json"
+      {
+        srcs = [ cfg.package ];
+      }
+      ''
+        ${pkgs.jq}/bin/jq -n \
+          --slurpfile base ${cfg.package}/etc/strata/strata.json \
+          --arg cwd "${cfg.stateDir}" \
+          --argjson env '${builtins.toJSON cfg.env}' \
+          --argjson extra '${builtins.toJSON cfg.extraConfig}' \
+          --argjson args '${builtins.toJSON cfg.engineArgs}' \
+          --argjson model '${builtins.toJSON cfg.modelName}' \
+          '$base[0]
+            + { cwd: $cwd, env: (($base[0].env // {}) + $env) }
+            + (if $args != null then { args: $args } else {} end)
+            + (if $model != null then { model_name: $model } else {} end)
+            + $extra' > $out
+      '';
 
   # strata-server passes its own --config first; argparse takes the last one, so this one wins
-  serverArgs = [ "--config" confFile ]
-    ++ lib.optionals (cfg.host != null) [ "--host" cfg.host ]
-    ++ [ "--port" (toString cfg.port) ]
-    ++ lib.optionals (cfg.apiKey != null) [ "--api-key" cfg.apiKey ]
-    ++ lib.optionals (cfg.gpu != null) [ "--gpu" (toString cfg.gpu) ]
-    ++ cfg.extraArgs;
+  serverArgs = [
+    "--config"
+    confFile
+  ]
+  ++ lib.optionals (cfg.host != null) [
+    "--host"
+    cfg.host
+  ]
+  ++ [
+    "--port"
+    (toString cfg.port)
+  ]
+  ++ lib.optionals (cfg.apiKey != null) [
+    "--api-key"
+    cfg.apiKey
+  ]
+  ++ lib.optionals (cfg.gpu != null) [
+    "--gpu"
+    (toString cfg.gpu)
+  ]
+  ++ cfg.extraArgs;
 in
 {
   options.services.strata = {
@@ -69,8 +98,15 @@ in
 
     hipArchs = lib.mkOption {
       type = types.listOf types.str;
-      default = [ "gfx1100" "gfx1151" "gfx1201" ];   # the package's own default
-      example = [ "gfx1100" "gfx1201" ];
+      default = [
+        "gfx1100"
+        "gfx1151"
+        "gfx1201"
+      ]; # the package's own default
+      example = [
+        "gfx1100"
+        "gfx1201"
+      ];
       description = "The HIP target list the default package is compiled for, one architecture per
         entry; only used to build the default package, so override services.strata.package instead when
         the machine's card is a different one.";
@@ -99,7 +135,12 @@ in
     };
 
     gpu = lib.mkOption {
-      type = types.nullOr (types.oneOf [ types.int types.str ]);
+      type = types.nullOr (
+        types.oneOf [
+          types.int
+          types.str
+        ]
+      );
       default = null;
       example = "0,1";
       description = "The GPU (or the layer split across several, as \"0,1\") the engine runs on. Null:
@@ -116,7 +157,13 @@ in
     engineArgs = lib.mkOption {
       type = types.nullOr (types.listOf types.str);
       default = null;
-      example = [ "--pack" "/var/lib/strata/pack" "--resident-experts" "--max-context" "32768" ];
+      example = [
+        "--pack"
+        "/var/lib/strata/pack"
+        "--resident-experts"
+        "--max-context"
+        "32768"
+      ];
       description = "The engine's arguments. Null: the package's own, unchanged.";
     };
 
@@ -128,23 +175,35 @@ in
 
     env = lib.mkOption {
       type = types.attrsOf types.str;
-      default = {};
-      example = { STRATA_RESIDENT_PIN = "1"; };
+      default = { };
+      example = {
+        STRATA_RESIDENT_PIN = "1";
+      };
       description = "Engine environment, added to what the package's config carries.";
     };
 
     extraConfig = lib.mkOption {
       type = types.attrsOf types.anything;
-      default = {};
-      example = { api_monitor = true; idle_unload_s = 300; allowed_hosts = [ "that.name" ]; };
+      default = { };
+      example = {
+        api_monitor = true;
+        idle_unload_s = 300;
+        allowed_hosts = [ "that.name" ];
+        vision = null;
+      };
       description = "Anything else the server's config accepts (sampling, aliases, mcp_servers,
-        cors_origins, allowed_hosts, engine_silence_s, ...), merged into the generated config.";
+        cors_origins, allowed_hosts, engine_silence_s, ...), merged into the generated config. The
+        package's config has a `vision` entry for the image encoder, so setting it to null here turns
+        image support off for this machine.";
     };
 
     extraArgs = lib.mkOption {
       type = types.listOf types.str;
-      default = [];
-      example = [ "--lazy" "--fit-max-tokens" ];
+      default = [ ];
+      example = [
+        "--lazy"
+        "--fit-max-tokens"
+      ];
       description = "Extra flags for serve.server (--lazy, --api-monitor, --idle-unload ...).";
     };
 
@@ -203,7 +262,10 @@ in
         RestartSec = 10;
         # the card is reached through the kernel driver: /dev/kfd and /dev/dri have to stay visible,
         # so no PrivateDevices, and the service needs the render/video groups
-        SupplementaryGroups = [ "render" "video" ];
+        SupplementaryGroups = [
+          "render"
+          "video"
+        ];
         # the resident experts pin memory, and ROCm wants an unlimited memlock for that
         LimitMEMLOCK = "infinity";
         TimeoutStartSec = cfg.startTimeout;

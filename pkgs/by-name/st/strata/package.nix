@@ -1,5 +1,6 @@
 # Strata: the inference engine (HIP) and its Python server, with the IQ2_XS model, its derived
-# tokenizer and the MTP draft layer, every download a pinned fetchurl - one self-contained store path.
+# tokenizer, the MTP draft layer and the image encoder, every download a pinned fetchurl - one
+# self-contained store path.
 #
 # This is the package definition; the flake callPackages it (flake.nix). Everything - the source pin,
 # the build, the config the server reads - lives here. The one thing the caller may choose is the
@@ -18,12 +19,16 @@
   stdenvNoCC,
   rocmPackages,
   python3,
-  hipArchs ? [ "gfx1100" "gfx1151" "gfx1201" ],
+  hipArchs ? [
+    "gfx1100"
+    "gfx1151"
+    "gfx1201"
+  ],
 }:
 let
   rocm = rocmPackages;
 
-  version = "0.1.38";   # setup.py's MIN_ENGINE: the engine this package builds
+  version = "0.1.38"; # setup.py's MIN_ENGINE: the engine this package builds
   # The target list as a list. A semicolon-separated string is accepted too, which is what the
   # NixOS module's services.strata.hipArchs passes.
   archList = if builtins.typeOf hipArchs == "string" then lib.splitString ";" hipArchs else hipArchs;
@@ -56,14 +61,25 @@ let
   llamaCpp = import ./llama.cpp.nix { inherit fetchurl stdenvNoCC; };
 
   # The server's non-stdlib imports (serve/ and tools/strata_tokenizer.py): jinja2 (chat templates),
-  # regex (the tokenizer), psutil (RAM telemetry), pillow (the image formats the engine's decoder
-  # cannot read). No web framework - serve/server.py is the stdlib http.server.
-  python = python3.withPackages (p: [ p.jinja2 p.regex p.psutil p.pillow ]);
+  # regex (the tokenizer), psutil (RAM telemetry), pillow (the image formats the image encoder's decoder
+  # cannot read, which the server converts to PNG before handing them over). No web framework -
+  # serve/server.py is the stdlib http.server.
+  python = python3.withPackages (p: [
+    p.jinja2
+    p.regex
+    p.psutil
+    p.pillow
+  ]);
 
   # Python for the build-time tools (tools/iq_pack.py, tools/strata_tokenizer.py, tools/mtp_pack.py,
   # tools/mtp_rt.py): numpy + the regex module, and the two third-party imports llama.cpp's gguf-py
   # (above) pulls in (pyyaml, requests); gguf-py itself is found through STRATA_GGUF_PY.
-  toolsPython = python3.withPackages (p: [ p.numpy p.regex p.pyyaml p.requests ]);
+  toolsPython = python3.withPackages (p: [
+    p.numpy
+    p.regex
+    p.pyyaml
+    p.requests
+  ]);
 
   # ---- the IQ2_XS model: the package's payload -------------------------------------------
   # Two GGUF shards from Hugging Face, pinned to the repository's revision of 2026-10-02 (the current
@@ -78,12 +94,25 @@ let
   hfRev = "ed59f92082b1e93c0e96d60a8b11aab089b52f09";
   s1 = "Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf";
   s2 = "Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf";
-  iq2xs = name: sha256: fetchurl {
-    url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/${hfRev}/IQ2_XS/${name}";
-    inherit sha256;
-  };
+  iq2xs =
+    name: sha256:
+    fetchurl {
+      url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/${hfRev}/IQ2_XS/${name}";
+      inherit sha256;
+    };
   iq2xsS1 = iq2xs s1 "92cee27ae5bbadcd732416a0f7a7f0acc092399dbbe8f5a5efa707c2ec0a49d7";
   iq2xsS2 = iq2xs s2 "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113";
+
+  # ---- the vision encoder: the model's mmproj (the vision encoder + projector, 0.9 GB) ---------------
+  # The same repository and the same pinned revision as the shards: setup.py's FAMILIES entry for this
+  # model names this file, and it is shared by the Coder and Unsloth releases too. strata-vision (built
+  # below from tools/vision) reads it with llama.cpp's mtmd; the engine places the rows it produces at the
+  # prompt's image pad tokens.
+  mmprojName = "mmproj-Qwen3.8-Flash-Next-BF16.gguf";
+  mmproj = fetchurl {
+    url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/${hfRev}/${mmprojName}";
+    sha256 = "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0";
+  };
 
   # ---- the MTP draft layer's source: 28 shards of the original BF16 checkpoint -----------------
   # The GGUF above ships no MTP head; the checkpoint (Qwen/Qwen3.8-Flash-Next, 360 GB in 131 shards)
@@ -94,13 +123,15 @@ let
   # tools/mtp_fetch.py pins for that revision (#327) - the original range-fetching implementation,
   # whose table stays the single source of truth for the pins. No network in the build.
   qwenRev = "de4b8e4d43b917e7706784d8bb445c9af86a3540";
-  qwen = name: sha256: fetchurl {
-    url = "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/resolve/${qwenRev}/${name}";
-    inherit sha256;
-  };
-  qwenIndex = qwen "model.safetensors.index.json"
-    "99e815241ef03325536b0aaa4441deea45174c17fae31e10f0bb456410c590de";
-  mtpShards = [ (qwen "model-00037-of-00131.safetensors" "73b53c94d23589bdfde55b20538a515525f22fd37c7cdf24e85738ed771218e1")
+  qwen =
+    name: sha256:
+    fetchurl {
+      url = "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/resolve/${qwenRev}/${name}";
+      inherit sha256;
+    };
+  qwenIndex = qwen "model.safetensors.index.json" "99e815241ef03325536b0aaa4441deea45174c17fae31e10f0bb456410c590de";
+  mtpShards = [
+    (qwen "model-00037-of-00131.safetensors" "73b53c94d23589bdfde55b20538a515525f22fd37c7cdf24e85738ed771218e1")
     (qwen "model-00041-of-00131.safetensors" "0465251c296b1a6aa014480e54f0f23ce6899bca72ba2be4804cd9187095cc7c")
     (qwen "model-00043-of-00131.safetensors" "a88f0411382143c6eb5ddeed84280a80f18f18d94670bda54cee1c1cd47cd824")
     (qwen "model-00047-of-00131.safetensors" "eb79852b4266e63fc7050e79349ece1eb3160eedb13bdb5f39b4c768e0741a4f")
@@ -130,17 +161,37 @@ let
     (qwen "model-00124-of-00131.safetensors" "bf22358402faf83962759e05b13480151b138d03203d30f04524f8d53e498c7c")
   ];
 
-  # stdenv `source`s every bare file in buildInputs (its "setup hook" mechanism), so the model and
-  # MTP payloads enter the build as linkFarm directories of symlinks instead (directories are never
-  # sourced). The interpolation into linkFarm's script is what makes the 123 GB of store paths
+  # stdenv `source`s every bare file in buildInputs (its "setup hook" mechanism), so the model, MTP and
+  # vision payloads enter the build as linkFarm directories of symlinks instead (directories are never
+  # sourced). The interpolation into linkFarm's script is what makes the 124 GB of store paths
   # dependencies of this derivation, and the build sandbox resolves the links through to them.
   mtpData = linkFarm "mtp-data" (
-    [ { name = "model.safetensors.index.json"; path = qwenIndex; } ]
-    ++ lib.map (s: { name = s.name; path = s; }) mtpShards
+    [
+      {
+        name = "model.safetensors.index.json";
+        path = qwenIndex;
+      }
+    ]
+    ++ lib.map (s: {
+      name = s.name;
+      path = s;
+    }) mtpShards
   );
   modelData = linkFarm "iq2xs-model" [
-    { name = s1; path = iq2xsS1; }
-    { name = s2; path = iq2xsS2; }
+    {
+      name = s1;
+      path = iq2xsS1;
+    }
+    {
+      name = s2;
+      path = iq2xsS2;
+    }
+  ];
+  visionData = linkFarm "strata-mmproj" [
+    {
+      name = mmprojName;
+      path = mmproj;
+    }
   ];
 
   # The build-time extractor: the same layout tools/mtp_fetch.py fetch writes (tensors/<name>.bin
@@ -184,7 +235,7 @@ let
       with open(os.path.join(out, "mtp-manifest.json"), "w", encoding="utf-8") as o:
           json.dump(manifest, o, indent=1)
       print("%d MTP tensors, %.3f GB" % (len(manifest), sum(r["bytes"] for r in manifest) / 1e9))
-      '';
+    '';
   };
 
   # nixpkgs has no single /opt/rocm prefix: each package is its own store path, and CMake's
@@ -198,8 +249,13 @@ let
   #   rocm-runtime the remaining runtime libraries
   #   hip-common  the HIP headers hipcc includes
   rocmLibs = [
-    rocm.clr rocm.hipblas rocm.hipblaslt rocm.rocm-core
-    rocm.rocm-comgr rocm.rocm-runtime rocm.hip-common
+    rocm.clr
+    rocm.hipblas
+    rocm.hipblaslt
+    rocm.rocm-core
+    rocm.rocm-comgr
+    rocm.rocm-runtime
+    rocm.hip-common
   ];
 
   # the engine loads libamdhip64 / hsa-runtime64 / the hipBLAS libraries at run time; stdenv patches
@@ -223,6 +279,18 @@ let
     # llama.cpp from the store instead of a FetchContent network fetch
     "-DSTRATA_GGML_DIR=${llamaCpp}"
   ];
+
+  # tools/vision is its own CMake project (strata-vision, the image encoder). The AMD backend has no GPU
+  # image encoder upstream - setup.py's hip_vision() answers "images off, or --vision cpu" - so this is the
+  # CPU one, the same AVX2 baseline as the engine. MTMD_VIDEO is off: the server hands the encoder still
+  # images only, so it needs no ffmpeg.
+  visionCmakeFlags = builtins.concatStringsSep " " [
+    "-DCMAKE_BUILD_TYPE=Release"
+    "-DLLAMA_DIR=${llamaCpp}"
+    "-DSTRATA_VISION_CUDA=OFF"
+    "-DSTRATA_PORTABLE=ON"
+    "-DMTMD_VIDEO=OFF"
+  ];
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "strata";
@@ -231,7 +299,10 @@ stdenv.mkDerivation (finalAttrs: {
   # the post-tag gfx1151/gfx1150 HIP archs, applied to the unpacked source by patchPhase (-p1)
   patches = [ ./hip_backend.patch ];
 
-  nativeBuildInputs = [ cmake ninja ];
+  nativeBuildInputs = [
+    cmake
+    ninja
+  ];
   # stdenv skips its default configure (it would run cmake with no flags and hit the network
   # FetchContent): everything happens in buildPhase
   configurePhase = "true";
@@ -243,7 +314,11 @@ stdenv.mkDerivation (finalAttrs: {
   # ---- the payloads, as linkFarm directories (see mtpData / modelData, above): the IQ2_XS model
   # (67 GB), plus the MTP draft layer's source, the checkpoint index + the 28 shards holding its
   # 31 mtp.* tensors (55.17 GB; buildPhase extracts only the ~5 GB of MTP byte ranges, mtpLocal)
-  buildInputs = [ mtpData modelData ];
+  buildInputs = [
+    mtpData
+    modelData
+    visionData
+  ];
 
   env.HIP_PLATFORM = "amd";
   env.ROCM_PATH = rocm.clr;
@@ -258,6 +333,11 @@ stdenv.mkDerivation (finalAttrs: {
   buildPhase = ''
     cmake -S . -B build -G Ninja ${cmakeFlags}
     ninja -C build strata strata-device
+
+    # ---- the image encoder (strata-vision): llama.cpp's mtmd over the mmproj, on the CPU. The server
+    # spawns it once and sends it "ENC <image> <output>" lines; each image's embeddings go to the engine.
+    cmake -S tools/vision -B build-vision -G Ninja ${visionCmakeFlags}
+    ninja -C build-vision strata-vision
 
     # ---- the IQ2_XS pack. tools/iq_pack.py reads every shard beside --gguf (the shards keep their
     # original names), derives the tokenizer from the GGUF metadata (tools/strata_tokenizer.py:
@@ -290,16 +370,24 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   installPhase = ''
-    mkdir -p $out/bin $out/etc/strata
+    mkdir -p $out/bin $out/etc/strata $out/vision
     # the server runs from the stored tree: serve/server.py's ROOT is the directory holding serve/
     cp -a serve tools chat.py requirements.txt $out/
     for exe in strata strata-device; do
       install -m 755 build/$exe $out/bin/$exe
     done
+    install -m 755 build-vision/bin/strata-vision $out/bin/strata-vision
+    cp ${visionData}/* $out/vision/
     # the config shape setup.py writes (exe, args, cwd, tokenizer, model_name), filled for this
     # machine: 32 GB of RAM + 32 GB of VRAM (gfx1151) runs IQ2_XS in the low-RAM resident mode -
     # the experts the GPU does not hold live in RAM, the 26.8 GB PLE table stays on disk. The KV
     # cache is int8 at the full 131072-token context.
+    # "vision" turns the server's image support on (chat.py's /image, OpenAI image_url parts, Anthropic
+    # image blocks). It is the image encoder on the CPU, since the AMD backend has no GPU one upstream.
+    # "model" is the text model the encoder opens vocab-only for the image positions: shard 1, with shard 2
+    # beside it under its original name, which is how llama.cpp resolves a split GGUF. No "threads": the
+    # encoder takes half the cores, what setup.py writes for a CPU encoder, and this package cannot know the
+    # target PC's core count. JSON, so no comments here.
     cat > $out/etc/strata/strata.json <<'EOF'
     {
       "exe": "@OUT@/bin/strata",
@@ -321,16 +409,24 @@ stdenv.mkDerivation (finalAttrs: {
       "tokenizer": "@OUT@/pack/iq2xs/tokenizer",
       "model_name": "qwen3.8-flash-next-iq2_xs",
       "backend": "hip",
-      "env": { "STRATA_RESIDENT_PIN": "0" }
+      "env": { "STRATA_RESIDENT_PIN": "0" },
+      "vision": {
+        "exe": "@OUT@/bin/strata-vision",
+        "mmproj": "@OUT@/vision/@MMPROJ@",
+        "model": "@OUT@/models/IQ2_XS/@S1@",
+        "gpu": false,
+        "max_tokens": 300
+      }
     }
     EOF
-    sed -i -e "s|@OUT@|$out|" -e "s|@S1@|${s1}|" -e "s|@S2@|${s2}|" $out/etc/strata/strata.json
+    sed -i -e "s|@OUT@|$out|" -e "s|@S1@|${s1}|" -e "s|@S2@|${s2}|" -e "s|@MMPROJ@|${mmprojName}|" $out/etc/strata/strata.json
     # the metadata setup.py's installer records and the server reads from beside the engine
     cat > $out/bin/BUILD.json <<'EOF'
     {
       "version": "${version}",
       "backend": "hip",
-      "archs": [${lib.concatStringsSep ", " (map (a: "\"${a}\"") archList)}]
+      "archs": [${lib.concatStringsSep ", " (map (a: "\"${a}\"") archList)}],
+      "vision": "cpu"
     }
     EOF
     # strata-server: the Python server over the stored engine
@@ -346,7 +442,7 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   meta = with lib; {
-    description = "The Strata inference engine (HIP for ${archString}) and its Python server, with the IQ2_XS model (~67 GB), its derived tokenizer and the MTP draft layer (28 pinned checkpoint shards, ~55 GB): one self-contained store path to serve";
+    description = "The Strata inference engine (HIP for ${archString}), its Python server and its image encoder, with the IQ2_XS model (~67 GB), its derived tokenizer, the MTP draft layer (28 pinned checkpoint shards, ~55 GB) and the mmproj vision encoder (~0.9 GB): one self-contained store path to serve";
     homepage = "https://github.com/Niko1221/Strata";
     license = licenses.mit;
     platforms = [ "x86_64-linux" ];
