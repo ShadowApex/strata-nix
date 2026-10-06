@@ -34,7 +34,9 @@
 let
   rocm = rocmPackages;
 
-  version = "0.1.39"; # setup.py's MIN_ENGINE: the engine this package builds
+  # The tag. The engine is 0.1.40 (setup.py's MIN_ENGINE); 0.1.40.1 is the Python-server hotfix on top of it,
+  # and setup.py reads a four-part version like this as 0.1.40.
+  version = "0.1.40.1";
   # The target list as a list. A semicolon-separated string is accepted too, which is what the
   # NixOS module's services.strata.hipArchs passes.
   archList = if builtins.typeOf hipArchs == "string" then lib.splitString ";" hipArchs else hipArchs;
@@ -48,16 +50,13 @@ let
     owner = "Niko1221";
     repo = "Strata";
     rev = "v${version}";
-    hash = "sha256-9jqmV+AbGKiOqW1DvKjqBLVXmJCI9o6WI85QoHj5vBI=";
+    hash = "sha256-y+0Qn2KhyVFfQrZi1L9BzR7iqQoRHjkXO9W48VJO2QQ=";
   };
 
-  # The tagged hip_backend.cmake (v0.1.39) only accepts gfx1100/gfx1101/gfx1200/gfx1201 (unvalidated:
-  # gfx1012;gfx1102;gfx1030;gfx1031); the support for gfx1151 (Radeon 8060S) and gfx1150 (Radeon 890M) this
-  # package's default hipArchs targets landed upstream after the tag. hip_backend.patch (beside this
-  # package) is the diff between the tag's file and the version this repository carries - it adds those
-  # two archs to _strata_hip_unvalidated - and stdenv applies it to the unpacked source in patchPhase, so
-  # the build runs from the patched tree. It is regenerated against each tag, since the tag's own list
-  # changes; when the patch is upstreamed, drop it and nothing else changes.
+  # The HIP target list is validated by the source's own cmake/hip_backend.cmake: gfx1100 and gfx1201 by the
+  # maintainers, gfx1101 and gfx1200 by their owners, and the rest - gfx1151 (Radeon 8060S), which this
+  # package's default hipArchs targets, is among them - builds with a warning. Nothing patches it any more:
+  # the arch list this package used to carry as a patch landed upstream in v0.1.40.
 
   # llama.cpp pinned at the commit CMakeLists.txt's FetchContent default uses (setup.py's
   # LLAMA_CPP_COMMIT and third_party/ggml/VERSION.txt record the same id). -DSTRATA_GGML_DIR points
@@ -274,6 +273,9 @@ let
     "-DSTRATA_ENABLE_CUDA=OFF"
     "-DSTRATA_BUILD_TESTS=OFF"
     "-DSTRATA_NATIVE_EXPERTS=ON"
+    # the GGML MMQ prompt path, off in CMakeLists.txt by default: this is what compiles the gfx11 WMMA fused
+    # prompt-expert kernels, and it is on in upstream's own Strix Halo build line (docs/STRIX_HALO.md)
+    "-DSTRATA_PREFILL_MMQ=ON"
     # this machine is not the target PC: ggml-cpu at the AVX2 baseline instead of host-native
     # (CMakeLists.txt's STRATA_PORTABLE); the AVX-512 expert kernels keep their runtime CPU dispatch
     "-DSTRATA_PORTABLE=ON"
@@ -305,8 +307,6 @@ let
   engine = stdenv.mkDerivation {
     pname = "strata-engine";
     inherit version src;
-    # the post-tag gfx1151/gfx1150 HIP archs, applied to the unpacked source by patchPhase (-p1)
-    patches = [ ./hip_backend.patch ];
     nativeBuildInputs = [
       cmake
       ninja
@@ -327,8 +327,7 @@ let
     propagatedBuildInputs = rocmLibs;
   };
 
-  # ---- the image encoder: no HIP target list, so a change to hipArchs does not rebuild it. The patch
-  # above only touches cmake/hip_backend.cmake, so the unpatched source is enough here.
+  # ---- the image encoder: no HIP target list, so a change to hipArchs does not rebuild it.
   visionBin = stdenv.mkDerivation {
     pname = "strata-vision-engine";
     inherit version src;

@@ -33,7 +33,6 @@ flake.nix                          # thin wrapper: callPackage the package, expo
 pkgs/by-name/st/strata/            # the package, in nixpkgs' by-name layout (this directory is what would move to nixpkgs)
   package.nix                      # the source pin, the build, and the config the server reads; hipArchs is its parameter
   llama.cpp.nix                    # pinned llama.cpp, source-only store path, used as -DSTRATA_GGML_DIR
-  hip_backend.patch                # applied by patchPhase: adds gfx1151/gfx1150 to the tag's arch list
 modules/services/strata.nix        # the services.strata NixOS module (the service as a systemd unit)
 README.md                          # build/run/service usage, and the layout table
 ```
@@ -95,10 +94,10 @@ serve/ tools/ chat.py requirements.txt   the upstream Python tree, run from the 
   path, found through `CMAKE_PREFIX_PATH`, and the HIP compiler is
   `rocm.clr/bin/amdclang++`.
 - `hipArchs` is the only caller-visible knob (a list, or a `;`-joined string). It
-  is validated by the package's `cmake/hip_backend.cmake` as patched —
-  unvalidated archs build with a warning — and is recorded in `bin/BUILD.json`.
-- `hip_backend.patch` is a temporary divergence from the tagged source (unchanged since
-  `v0.1.37`). When it lands upstream, drop the patch and nothing else changes.
+  is validated by the source's own `cmake/hip_backend.cmake` — gfx1100/gfx1201 by the maintainers,
+  gfx1101/gfx1200 by their owners, the rest (the default `gfx1151` included) build with a warning —
+  and is recorded in `bin/BUILD.json`. Nothing patches that file: the arch list this repository used to
+  carry in `hip_backend.patch` landed upstream in `v0.1.40`.
 - `llama.cpp.nix` is `import`ed directly. That is fine here, but a nixpkgs
   `by-name` package may only use its function arguments, so it would have to
   become its own `by-name` entry to be upstreamed.

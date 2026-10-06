@@ -120,6 +120,5 @@ itself is a read-only store path. Images are on because the package's config has
 | --- | --- |
 | `flake.nix` | `callPackage`s the package; exposes `nixosModules.strata` |
 | `pkgs/by-name/st/strata/package.nix` | The source pin, the build, the config the server reads; `hipArchs` is its parameter, default `[ "gfx1100" "gfx1151" "gfx1201" ]` |
-| `pkgs/by-name/st/strata/hip_backend.patch` | Patch applied to the tagged source: adds `gfx1151`/`gfx1150` to its arch list |
 | `pkgs/by-name/st/strata/llama.cpp.nix` | Pinned llama.cpp (source only) used as `-DSTRATA_GGML_DIR` |
 | `modules/services/strata.nix` | The `services.strata` NixOS module (`services.strata.hipArchs` is a list of archs) |
