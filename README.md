@@ -5,7 +5,8 @@ Anthropic-compatible model server running on one AMD GPU plus system RAM — for
 ROCm 7 (`hipcc` + hipBLAS from `pkgs.rocmPackages`, no TheRock wheels, no ROCm install on the host
 beyond the kernel's `amdgpu` driver).
 
-The package's output holds the engine, the Python server, the IQ2_XS model, its derived tokenizer, the MTP
+The package's output holds the engine, the Python server, the model (IQ2_XS by default; IQ3_XXS or IQ3_S
+with the `model` parameter), its derived tokenizer, the MTP
 draft layer and the image encoder with its mmproj; every download is a hash-pinned `fetchurl`, so the
 build is reproducible and needs no network at configure time. Its closure is the whole package: the big
 payloads are separate stage derivations that the output links to.
@@ -18,7 +19,9 @@ draft layer read only the pins and the tools scripts — no ROCm, no CMake, no t
 
 - Linux, `x86_64`, Nix with flakes enabled
 - An AMD GPU whose HIP architecture is in the target list (default `gfx1100`, `gfx1151`, `gfx1201`)
-- Disk for the pinned model + checkpoint shards + the mmproj (~124 GB of downloads during the build)
+- Disk for the pinned model + checkpoint shards + the mmproj (~124 GB of downloads during the build for
+  IQ2_XS, ~132 GB for IQ3_XXS, ~140 GB for IQ3_S)
+- RAM for the model's experts: 48 GB at IQ2_XS, 60 GB at IQ3_XXS, 62 GB at IQ3_S
 
 ## Build
 
@@ -45,6 +48,29 @@ nix build --impure --expr '(import <nixpkgs> { system = "x86_64-linux"; }).callP
 ```
 
 A change to the assembly alone (the config text, the server wrapper) is a few seconds.
+
+## Model size
+
+`model` is a `callPackage` parameter of the package, default `IQ2_XS`, and the flake exposes the two IQ3
+sizes as their own outputs:
+
+```sh
+nix build .#strata-iq3-s          # the same engine and server over the IQ3_S pins
+```
+
+| `model` | download | RAM for its experts (`setup.py`'s `MODELS`) | |
+| --- | --- | --- | --- |
+| `Q2_0` | 66.4 GB | 48 GB | 2-bit, the fastest |
+| `IQ2_XS` | 68.0 GB | 48 GB | 2-bit i-quant, a little better quality, close in speed |
+| `IQ3_XXS` | 75.8 GB | 60 GB | 3-bit i-quant, better quality, slower (more CPU work per token) |
+| `IQ3_S` | 83.6 GB | 62 GB | 3.5-bit, the best quality, the slowest; wants a 64 GB PC |
+
+The size reaches the pins and the pack stage only: the engine, the image encoder and the draft layer are
+the same for every size, so switching sizes keeps the engine cached and each size caches its own pack
+(`pack/iq2xs`, `pack/iq3xxs`, `pack/iq3s`). The pack work grows with the size, since `experts.bin` is
+35.5 GB at IQ2_XS, 42.9 GB at IQ3_XXS and 50.3 GB at IQ3_S. The size is recorded in the package's
+`bin/BUILD.json`, and the config the package writes is the low-RAM resident mode for a PC with the RAM
+listed above.
 
 ## Run
 
@@ -100,6 +126,7 @@ path itself is read-only, so `stateDir` remains the only place the service write
         {
           services.strata.enable = true;
           services.strata.hipArchs = [ "gfx1100" "gfx1151" "gfx1201" ];   # the card in the machine
+          services.strata.model = "IQ3_S";                                # the size the default package is built with
           services.strata.apiKey = "a long random secret";              # or null + environment.STRATA_API_KEY
         };
       ];
@@ -114,11 +141,14 @@ takes minutes). Its working directory is `/var/lib/strata` — the only writable
 itself is a read-only store path. Images are on because the package's config has a `vision` entry;
 `services.strata.extraConfig = { vision = null; }` turns them off for that machine.
 
+`services.strata.model` builds the default package with one of the sizes above, and
+`services.strata.package` takes any package instead, such as the flake's `packages.strata-iq3-s`.
+
 ## Layout
 
 | Path | What it is |
 | --- | --- |
-| `flake.nix` | `callPackage`s the package; exposes `nixosModules.strata` |
-| `pkgs/by-name/st/strata/package.nix` | The source pin, the build, the config the server reads; `hipArchs` is its parameter, default `[ "gfx1100" "gfx1151" "gfx1201" ]` |
+| `flake.nix` | `callPackage`s the package; exposes `packages.strata-iq3-xxs` and `packages.strata-iq3-s` and `nixosModules.strata` |
+| `pkgs/by-name/st/strata/package.nix` | The source pin, the build, the config the server reads; `hipArchs` and `model` are its parameters, default `[ "gfx1100" "gfx1151" "gfx1201" ]` and `IQ2_XS` |
 | `pkgs/by-name/st/strata/llama.cpp.nix` | Pinned llama.cpp (source only) used as `-DSTRATA_GGML_DIR` |
-| `modules/services/strata.nix` | The `services.strata` NixOS module (`services.strata.hipArchs` is a list of archs) |
+| `modules/services/strata.nix` | The `services.strata` NixOS module (`services.strata.hipArchs` is a list of archs, `services.strata.model` the size) |

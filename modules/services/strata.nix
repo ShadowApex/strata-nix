@@ -12,6 +12,10 @@
 #   services.strata.apiKey = "a long random secret";   # or environment.STRATA_API_KEY
 #   services.strata.host = "0.0.0.0";                  # only if other devices should reach it
 #
+# The model size is the package's choice: services.strata.model builds the default package with one of the
+# sizes the pinned repository carries (IQ2_XS by default, IQ3_XXS, IQ3_S, Q2_0), and services.strata.package
+# takes any package instead, such as the flake's packages.strata-iq3-s.
+#
 # The API key is a secret: putting it in the Nix config puts it in the store. A machine that keeps the
 # key out of its configuration sets environment.STRATA_API_KEY some other way and leaves
 # services.strata.apiKey null - the server reads the variable when there is no --api-key.
@@ -92,7 +96,7 @@ in
     package = lib.mkOption {
       type = types.package;
       default = pkgs.callPackage ../../pkgs/by-name/st/strata/package.nix {
-        inherit (cfg) hipArchs;
+        inherit (cfg) hipArchs model;
       };
       description = "The Strata package to serve (the engine, the model, the server). Set this to a
         package built for the card in the machine, or to the flake's own package.";
@@ -112,6 +116,17 @@ in
       description = "The HIP target list the default package is compiled for, one architecture per
         entry; only used to build the default package, so override services.strata.package instead when
         the machine's card is a different one.";
+    };
+
+    model = lib.mkOption {
+      type = types.str;
+      default = "IQ2_XS";
+      example = "IQ3_S";
+      description = "The model size the default package is built with, one of the sizes the pinned
+        repository carries (IQ2_XS, IQ3_XXS, IQ3_S, Q2_0). Only used to build the default package, so
+        override services.strata.package instead when you want a package that is already built. The size
+        decides which pins the package carries and which pack it runs, and its experts want RAM (setup.py:
+        IQ2_XS 48 GB, IQ3_XXS 60, IQ3_S 62), so the machine must have that much.";
     };
 
     port = lib.mkOption {

@@ -1,5 +1,5 @@
-# Strata: the inference engine (HIP) and its Python server, with the IQ2_XS model, its derived
-# tokenizer, the MTP draft layer and the image encoder, every download a pinned fetchurl.
+# Strata: the inference engine (HIP) and its Python server, with the model (IQ2_XS by default), its
+# derived tokenizer, the MTP draft layer and the image encoder, every download a pinned fetchurl.
 #
 # One derivation per stage, so the expensive stages are cached on their own. The pack and the MTP draft
 # layer read only the pinned downloads and the tools scripts - no ROCm, no CMake, no HIP target list -
@@ -8,9 +8,11 @@
 # other stages produce. Its closure is the whole package.
 #
 # This is the package definition; the flake callPackages it (flake.nix). Everything - the source pin,
-# the build, the config the server reads - lives here. The one thing the caller may choose is the
-# HIP target list, the hipArchs parameter below (default [ "gfx1100" "gfx1151" "gfx1201" ]):
-#   pkgs.callPackage path/to/package.nix { hipArchs = [ "gfx1100" "gfx1201" ]; }
+# the build, the config the server reads - lives here. The two things the caller may choose are the
+# HIP target list and the model size, both parameters below:
+#   pkgs.callPackage path/to/package.nix { hipArchs = [ "gfx1100" "gfx1201" ]; model = "IQ3_S"; }
+# The model changes the pins and the pack stage only; the engine, the image encoder and the draft layer
+# are the same for every size.
 
 {
   lib,
@@ -30,6 +32,7 @@
     "gfx1151"
     "gfx1201"
   ],
+  model ? "IQ2_XS",
 }:
 let
   rocm = rocmPackages;
@@ -89,27 +92,58 @@ let
     p.requests
   ]);
 
-  # ---- the IQ2_XS model: the package's payload -------------------------------------------
+  # ---- the model: the package's payload ---------------------------------------------------------
   # Two GGUF shards from Hugging Face, pinned to the repository's revision of 2026-10-02 (the current
   # `sha` of the repository; tools/mtp_fetch.py pins the same kind of revision for the checkpoint).
-  #   shard 1 (36.6 GB): the model - dense tensors and the 35.5 GB of quantized experts. The engine
-  #                      mmap's it (--native); the low-RAM resident mode reads its experts through
-  #                      pack's experts.bin, which tools/iq_pack.py cuts from it at build time.
-  #   shard 2 (26.8 GB): the per-layer token-embedding table alone (one tensor); it stays on disk,
-  #                      read by the engine as needed (--ple-gguf).
+  #   shard 1: the model - dense tensors and the quantized experts, whose size is the `model` parameter.
+  #            The engine mmap's it (--native); the low-RAM resident mode reads its experts through
+  #            pack's experts.bin, which tools/iq_pack.py cuts from it at build time.
+  #   shard 2 (26.8 GB): the per-layer token-embedding table alone (one tensor), byte-identical in every
+  #            size so it is pinned once; it stays on disk, read by the engine as needed (--ple-gguf).
   # The tokenizer is not a file in that repository: tools/strata_tokenizer.py derives it from shard 1's
   # GGUF metadata (vocab, merges, chat template) into pack/tokenizer/ at build time.
   hfRev = "ed59f92082b1e93c0e96d60a8b11aab089b52f09";
-  s1 = "Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf";
-  s2 = "Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf";
-  iq2xs =
+  # The sizes the repository carries: shard 1's sha256 (its LFS oid), the RAM setup.py's MODELS wants for
+  # its experts, and the download in GB. Only the selected size is fetched.
+  models = {
+    Q2_0 = {
+      sha256 = "69820c02ec7d0b45ef2ebb19d6620299db749fe2aded7f39f93c6b88b199b720";
+      ram = "48";
+      download = "66.4";
+    };
+    IQ2_XS = {
+      sha256 = "92cee27ae5bbadcd732416a0f7a7f0acc092399dbbe8f5a5efa707c2ec0a49d7";
+      ram = "48";
+      download = "68.0";
+    };
+    IQ3_XXS = {
+      sha256 = "219ea929900dfa9ef091f3aa473fdba6874b65fcb36526d7d851ac9e95856d15";
+      ram = "60";
+      download = "75.8";
+    };
+    IQ3_S = {
+      sha256 = "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3";
+      ram = "62";
+      download = "83.6";
+    };
+  };
+  modelNames = builtins.attrNames models;
+  modelEntry =
+    models.${model} or (throw "model ${model} is not one of ${lib.concatStringsSep ", " modelNames}");
+  shardName = i: "Qwen3.8-Flash-Next-GSQ-RCO-${model}-0000${toString i}-of-00002.gguf";
+  hfShard =
     name: sha256:
     fetchurl {
-      url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/${hfRev}/IQ2_XS/${name}";
+      url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/${hfRev}/${model}/${name}";
       inherit sha256;
     };
-  iq2xsS1 = iq2xs s1 "92cee27ae5bbadcd732416a0f7a7f0acc092399dbbe8f5a5efa707c2ec0a49d7";
-  iq2xsS2 = iq2xs s2 "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113";
+  s1 = shardName 1;
+  s2 = shardName 2;
+  modelS1 = hfShard s1 modelEntry.sha256;
+  modelS2 = hfShard s2 "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113";
+  # the pack directory and the pack derivation's name: the size lowercased without underscores (iq2xs,
+  # iq3xxs, iq3s), so each size caches its own pack
+  packName = lib.replaceStrings [ "_" ] [ "" ] (lib.toLower model);
 
   # ---- the vision encoder: the model's mmproj (the vision encoder + projector, 0.9 GB) ---------------
   # The same repository and the same pinned revision as the shards: setup.py's FAMILIES entry for this
@@ -185,14 +219,14 @@ let
       path = s;
     }) mtpShards
   );
-  modelData = linkFarm "iq2xs-model" [
+  modelData = linkFarm "strata-model-${model}" [
     {
       name = s1;
-      path = iq2xsS1;
+      path = modelS1;
     }
     {
       name = s2;
-      path = iq2xsS2;
+      path = modelS2;
     }
   ];
   visionData = linkFarm "strata-mmproj" [
@@ -346,10 +380,10 @@ let
     '';
   };
 
-  # ---- the IQ2_XS pack: the pinned shards and the tools scripts, nothing else. The tools run from the
-  # read-only store path, so they must not leave a __pycache__ there.
+  # ---- the pack: the pinned shards and the tools scripts, nothing else, one derivation per size. The
+  # tools run from the read-only store path, so they must not leave a __pycache__ there.
   pack =
-    runCommand "strata-pack-iq2xs"
+    runCommand "strata-pack-${packName}"
       {
         nativeBuildInputs = [ toolsPython ];
         buildInputs = [ modelData ];
@@ -359,8 +393,8 @@ let
       ''
         # tools/iq_pack.py reads every shard beside --gguf (the shards keep their original names), derives
         # the tokenizer from the GGUF metadata (tools/strata_tokenizer.py: vocab, merges, the chat template
-        # into tokenizer/), and writes index.txt / dense.bin / native_experts.txt / experts.bin (the 35.5 GB
-        # of quantized experts the low-RAM resident mode reads at run time).
+        # into tokenizer/), and writes index.txt / dense.bin / native_experts.txt / experts.bin (the quantized
+        # experts the low-RAM resident mode reads at run time: 35.5 GB at IQ2_XS, 42.9 at IQ3_XXS, 50.3 at IQ3_S).
         ${toolsPython}/bin/python3 ${src}/tools/iq_pack.py \
           --gguf ${modelData}/${s1} --out $out --experts-bin
       '';
@@ -386,10 +420,10 @@ let
         cp ${src}/data/draft_vocab.bin $out/draft_vocab.bin
       '';
 in
-runCommand "strata-${version}"
+runCommand "strata-${model}-${version}"
   {
     meta = with lib; {
-      description = "The Strata inference engine (HIP for ${archString}), its Python server and its image encoder, with the IQ2_XS model (~67 GB), its derived tokenizer, the MTP draft layer (28 pinned checkpoint shards, ~55 GB) and the mmproj vision encoder (~0.9 GB): the assembly of the stage derivations above, whose closure is the whole package";
+      description = "The Strata inference engine (HIP for ${archString}), its Python server and its image encoder, with the ${model} model (~${modelEntry.download} GB), its derived tokenizer, the MTP draft layer (28 pinned checkpoint shards, ~55 GB) and the mmproj vision encoder (~0.9 GB): the assembly of the stage derivations above, whose closure is the whole package";
       homepage = "https://github.com/Niko1221/Strata";
       license = licenses.mit;
       platforms = [ "x86_64-linux" ];
@@ -402,9 +436,9 @@ runCommand "strata-${version}"
     # tree it runs from is real content here; only the payloads are links into their own store paths.
     mkdir -p $out/bin $out/etc/strata $out/models $out/pack $out/mtp $out/data
     cp -a ${src}/serve ${src}/tools ${src}/chat.py ${src}/requirements.txt $out/
-    ln -s ${modelData} $out/models/IQ2_XS
+    ln -s ${modelData} $out/models/${model}
     ln -s ${visionData} $out/vision
-    ln -s ${pack} $out/pack/iq2xs
+    ln -s ${pack} $out/pack/${packName}
     ln -s ${mtp} $out/mtp/rt
     cp ${src}/data/expert-profile.bin $out/data/
     ln -s ${engine}/bin/strata $out/bin/strata
@@ -412,9 +446,10 @@ runCommand "strata-${version}"
     ln -s ${visionBin}/bin/strata-vision $out/bin/strata-vision
 
     # the config shape setup.py writes (exe, args, cwd, tokenizer, model_name), filled for this
-    # machine: 32 GB of RAM + 32 GB of VRAM (gfx1151) runs IQ2_XS in the low-RAM resident mode -
-    # the experts the GPU does not hold live in RAM, the 26.8 GB PLE table stays on disk. The KV
-    # cache is int8 at the full 131072-token context.
+    # machine: the low-RAM resident mode - the experts the GPU does not hold live in RAM, the 26.8 GB PLE
+    # table stays on disk, and the KV cache is int8 at the full 131072-token context. The size here is
+    # ${model}: its experts want ~${modelEntry.ram} GB (setup.py's MODELS), so this is the
+    # config for a PC with that much RAM plus a 32 GB card.
     # Images need both halves, as setup.py writes them: the "vision" section makes the server spawn the
     # encoder (chat.py's /image, OpenAI image_url parts, Anthropic image blocks), and "--vision" in args is
     # what makes the engine accept the GENI requests it sends - without the flag the engine answers "this
@@ -428,9 +463,9 @@ runCommand "strata-${version}"
     {
       "exe": "@OUT@/bin/strata",
       "args": [
-        "--pack", "@OUT@/pack/iq2xs",
-        "--native", "@OUT@/models/IQ2_XS/@S1@",
-        "--ple-gguf", "@OUT@/models/IQ2_XS/@S2@",
+        "--pack", "@OUT@/pack/@PACK@",
+        "--native", "@OUT@/models/@MODEL@/@S1@",
+        "--ple-gguf", "@OUT@/models/@MODEL@/@S2@",
         "--expert-profile", "@OUT@/data/expert-profile.bin",
         "--expert-cache", "auto",
         "--prefill", "auto",
@@ -443,26 +478,27 @@ runCommand "strata-${version}"
         "--vision"
       ],
       "cwd": "@OUT@",
-      "tokenizer": "@OUT@/pack/iq2xs/tokenizer",
-      "model_name": "qwen3.8-flash-next-iq2_xs",
+      "tokenizer": "@OUT@/pack/@PACK@/tokenizer",
+      "model_name": "qwen3.8-flash-next-@MODEL_LOWER@",
       "backend": "hip",
       "env": { "STRATA_RESIDENT_PIN": "0" },
       "vision": {
         "exe": "@OUT@/bin/strata-vision",
         "mmproj": "@OUT@/vision/@MMPROJ@",
-        "model": "@OUT@/models/IQ2_XS/@S1@",
+        "model": "@OUT@/models/@MODEL@/@S1@",
         "gpu": false,
         "max_tokens": 300
       }
     }
     EOF
-    sed -i -e "s|@OUT@|$out|" -e "s|@S1@|${s1}|" -e "s|@S2@|${s2}|" -e "s|@MMPROJ@|${mmprojName}|" $out/etc/strata/strata.json
+    sed -i -e "s|@OUT@|$out|" -e "s|@MODEL@|${model}|" -e "s|@PACK@|${packName}|" -e "s|@MODEL_LOWER@|${lib.toLower model}|" -e "s|@S1@|${s1}|" -e "s|@S2@|${s2}|" -e "s|@MMPROJ@|${mmprojName}|" $out/etc/strata/strata.json
     # the metadata setup.py's installer records and the server reads from beside the engine
     cat > $out/bin/BUILD.json <<'EOF'
     {
       "version": "${version}",
       "backend": "hip",
       "archs": [${lib.concatStringsSep ", " (map (a: "\"${a}\"") archList)}],
+      "model": "${model}",
       "vision": "cpu"
     }
     EOF
