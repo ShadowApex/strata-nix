@@ -31,7 +31,7 @@ Nix-specific:
 ```text
 flake.nix                          # thin wrapper: callPackage the package, expose packages.* and nixosModules.strata
 pkgs/by-name/st/strata/            # the package, in nixpkgs' by-name layout (this directory is what would move to nixpkgs)
-  package.nix                      # the source pin, the build, and the config the server reads; hipArchs and model are its parameters
+  package.nix                      # the source pin, the build, and the config the server reads; hipArchs, model and prefillMmq are its parameters
   llama.cpp.nix                    # pinned llama.cpp, source-only store path, used as -DSTRATA_GGML_DIR
 modules/services/strata.nix        # the services.strata NixOS module (the service as a systemd unit)
 README.md                          # build/run/service usage, and the layout table
@@ -93,11 +93,15 @@ serve/ tools/ chat.py requirements.txt   the upstream Python tree, run from the 
 - nixpkgs has no single `/opt/rocm` prefix: each ROCm package is its own store
   path, found through `CMAKE_PREFIX_PATH`, and the HIP compiler is
   `rocm.clr/bin/amdclang++`.
-- `hipArchs` and `model` are the caller-visible knobs. `hipArchs` is a list (or a `;`-joined string). It
+- `hipArchs`, `model` and `prefillMmq` are the caller-visible knobs. `hipArchs` is a list (or a `;`-joined string). It
   is validated by the source's own `cmake/hip_backend.cmake` — gfx1100/gfx1201 by the maintainers,
   gfx1101/gfx1200 by their owners, the rest (the default `gfx1151` included) build with a warning —
   and is recorded in `bin/BUILD.json`. Nothing patches that file: the arch list this repository used to
   carry in `hip_backend.patch` landed upstream in `v0.1.40`.
+- `prefillMmq` is the GGML MMQ prompt path (`-DSTRATA_PREFILL_MMQ`, ON here against upstream's OFF default;
+  it requires HIP, which this package always enables). It reaches the engine stage alone, so flipping it
+  rebuilds the engine and the assembly, not the pack, the encoder or the draft layer, and it is recorded in
+  `bin/BUILD.json` as `prefill_mmq`.
 - `model` selects the size: the shard 1 pin and the pack, so each size has its own pack derivation
   (`strata-pack-<size>`) and its own `pack/<size>` output — one name for all sizes would let the caches
   collide. Shard 2 is byte-identical in every size (the PLE table alone), so it is pinned once. The size

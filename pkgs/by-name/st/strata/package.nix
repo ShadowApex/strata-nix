@@ -8,11 +8,11 @@
 # other stages produce. Its closure is the whole package.
 #
 # This is the package definition; the flake callPackages it (flake.nix). Everything - the source pin,
-# the build, the config the server reads - lives here. The two things the caller may choose are the
-# HIP target list and the model size, both parameters below:
-#   pkgs.callPackage path/to/package.nix { hipArchs = [ "gfx1100" "gfx1201" ]; model = "IQ3_S"; }
+# the build, the config the server reads - lives here. The three things the caller may choose are the
+# HIP target list, the model size and the MMQ prompt path, all parameters below:
+#   pkgs.callPackage path/to/package.nix { hipArchs = [ "gfx1100" "gfx1201" ]; model = "IQ3_S"; prefillMmq = false; }
 # The model changes the pins and the pack stage only; the engine, the image encoder and the draft layer
-# are the same for every size.
+# are the same for every size. prefillMmq reaches the engine alone.
 
 {
   lib,
@@ -33,6 +33,7 @@
     "gfx1201"
   ],
   model ? "IQ2_XS",
+  prefillMmq ? true,
 }:
 let
   rocm = rocmPackages;
@@ -307,9 +308,10 @@ let
     "-DSTRATA_ENABLE_CUDA=OFF"
     "-DSTRATA_BUILD_TESTS=OFF"
     "-DSTRATA_NATIVE_EXPERTS=ON"
-    # the GGML MMQ prompt path, off in CMakeLists.txt by default: this is what compiles the gfx11 WMMA fused
-    # prompt-expert kernels, and it is on in upstream's own Strix Halo build line (docs/STRIX_HALO.md)
-    "-DSTRATA_PREFILL_MMQ=ON"
+    # the GGML MMQ prompt path (the prefillMmq parameter), off in CMakeLists.txt by default: this is what
+    # compiles the gfx11 WMMA fused prompt-expert kernels, and it is on in upstream's own Strix Halo build
+    # line (docs/STRIX_HALO.md). It requires HIP, which this package always enables.
+    "-DSTRATA_PREFILL_MMQ=${if prefillMmq then "ON" else "OFF"}"
     # this machine is not the target PC: ggml-cpu at the AVX2 baseline instead of host-native
     # (CMakeLists.txt's STRATA_PORTABLE); the AVX-512 expert kernels keep their runtime CPU dispatch
     "-DSTRATA_PORTABLE=ON"
@@ -499,7 +501,8 @@ runCommand "strata-${model}-${version}"
       "backend": "hip",
       "archs": [${lib.concatStringsSep ", " (map (a: "\"${a}\"") archList)}],
       "model": "${model}",
-      "vision": "cpu"
+      "vision": "cpu",
+      "prefill_mmq": ${lib.boolToString prefillMmq}
     }
     EOF
     # strata-server: the Python server over the stored engine

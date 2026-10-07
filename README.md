@@ -49,6 +49,21 @@ nix build --impure --expr '(import <nixpkgs> { system = "x86_64-linux"; }).callP
 
 A change to the assembly alone (the config text, the server wrapper) is a few seconds.
 
+## Prompt path (MMQ)
+
+`prefillMmq` is a `callPackage` parameter of the package, default `true`. It is the GGML MMQ prompt path
+(`-DSTRATA_PREFILL_MMQ`), off in upstream's `CMakeLists.txt` but on in its own Strix Halo build line
+(`docs/STRIX_HALO.md`): this is what compiles the fused prompt-expert kernels for the prefill. It requires
+HIP, which this package always enables, so the flag is the only thing the parameter changes, and it reaches
+the engine stage alone — the pack, the encoder and the draft layer stay cached.
+
+```sh
+nix build --impure --expr '(import <nixpkgs> { system = "x86_64-linux"; }).callPackage ./pkgs/by-name/st/strata/package.nix { prefillMmq = false; }'
+```
+
+The choice is recorded in the package's `bin/BUILD.json` as `prefill_mmq`, and
+`services.strata.prefillMmq` is the same knob for the service.
+
 ## Model size
 
 `model` is a `callPackage` parameter of the package, default `IQ2_XS`, and the flake exposes the two IQ3
@@ -149,6 +164,6 @@ itself is a read-only store path. Images are on because the package's config has
 | Path | What it is |
 | --- | --- |
 | `flake.nix` | `callPackage`s the package; exposes `packages.strata-iq3-xxs` and `packages.strata-iq3-s` and `nixosModules.strata` |
-| `pkgs/by-name/st/strata/package.nix` | The source pin, the build, the config the server reads; `hipArchs` and `model` are its parameters, default `[ "gfx1100" "gfx1151" "gfx1201" ]` and `IQ2_XS` |
+| `pkgs/by-name/st/strata/package.nix` | The source pin, the build, the config the server reads; `hipArchs`, `model` and `prefillMmq` are its parameters, default `[ "gfx1100" "gfx1151" "gfx1201" ]`, `IQ2_XS` and `true` |
 | `pkgs/by-name/st/strata/llama.cpp.nix` | Pinned llama.cpp (source only) used as `-DSTRATA_GGML_DIR` |
-| `modules/services/strata.nix` | The `services.strata` NixOS module (`services.strata.hipArchs` is a list of archs, `services.strata.model` the size) |
+| `modules/services/strata.nix` | The `services.strata` NixOS module (`services.strata.hipArchs` is a list of archs, `services.strata.model` the size, `services.strata.prefillMmq` the MMQ prompt path) |

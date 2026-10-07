@@ -14,13 +14,13 @@
       pkgs = import nixpkgs { system = "x86_64-linux"; };
 
       # The package itself lives in pkgs/by-name/st/strata/package.nix (the source pin, the build, the
-      # config the server reads) and knows its own HIP target list and model size: hipArchs and model are
-      # callPackage parameters there, default [ "gfx1100" "gfx1151" "gfx1201" ] and IQ2_XS. Nothing is
-      # passed in here, so those defaults apply; for another card or another size, change the default there
-      # or callPackage it yourself:
+      # config the server reads) and knows its own HIP target list, model size and MMQ prompt path:
+      # hipArchs, model and prefillMmq are callPackage parameters there, default
+      # [ "gfx1100" "gfx1151" "gfx1201" ], IQ2_XS and true. Nothing is passed in here, so those defaults
+      # apply; for another card or another size, change the default there or callPackage it yourself:
       #   pkgs.callPackage ./pkgs/by-name/st/strata/package.nix { hipArchs = [ "gfx1100" "gfx1201" ]; model = "IQ3_S"; };
-      # In a NixOS configuration the service module's services.strata.hipArchs and services.strata.model do
-      # the same. The list is validated by the source's own hip_backend.cmake (gfx1100 + gfx1201
+      # In a NixOS configuration the service module's services.strata.hipArchs, services.strata.model and
+      # services.strata.prefillMmq do the same. The list is validated by the source's own hip_backend.cmake (gfx1100 + gfx1201
       # maintainer-validated, gfx1101 + gfx1200 community-validated, the rest - gfx1151 included - build with
       # a warning; docs/AMD_HIP.md), and is recorded in the package's bin/BUILD.json.
       strata-iq2-xs = pkgs.callPackage ./pkgs/by-name/st/strata/package.nix { model = "IQ2_XS"; };
