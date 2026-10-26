@@ -42,48 +42,109 @@ let
   # engine package takes a model package rather than a string - a by-name package may only use its arguments -
   # so the choice lands here, and the family decides whether services.strata.mtp is used at all.
   modelPackages = {
-    Q2_0 = {
+    Qwen_Q2_0 = {
       package = "strata-model-q2-0";
       family = "qwen35_ista";
     };
-    IQ2_XS = {
+    Qwen_IQ2_XS = {
       package = "strata-model-iq2-xs";
       family = "qwen35_ista";
     };
-    IQ3_XXS = {
+    Qwen_IQ3_XXS = {
       package = "strata-model-iq3-xxs";
       family = "qwen35_ista";
     };
-    IQ3_S = {
+    Qwen_IQ3_S = {
       package = "strata-model-iq3-s";
       family = "qwen35_ista";
     };
-    Gyro-S = {
+    Swift_IQ2_XS = {
+      package = "strata-model-swift-iq2-xs";
+      family = "qwen35_ista";
+    };
+    Swift_IQ3_XXS = {
+      package = "strata-model-swift-iq3-xxs";
+      family = "qwen35_ista";
+    };
+    Swift_IQ3_S = {
+      package = "strata-model-swift-iq3-s";
+      family = "qwen35_ista";
+    };
+    Coder_IQ1_M = {
+      package = "strata-model-coder-iq1-m";
+      family = "qwen35_ista";
+    };
+    Unsloth_UD_IQ4_XS = {
+      package = "strata-model-unsloth-ud-iq4-xs";
+      family = "qwen35_ista";
+    };
+    Unsloth_UD_Q4_K_XL = {
+      package = "strata-model-unsloth-ud-q4-k-xl";
+      family = "qwen35_ista";
+    };
+    Unsloth_UD_Q5_K_XL = {
+      package = "strata-model-unsloth-ud-q5-k-xl";
+      family = "qwen35_ista";
+    };
+    Unsloth_UD_Q6_K_XL = {
+      package = "strata-model-unsloth-ud-q6-k-xl";
+      family = "qwen35_ista";
+    };
+    Unsloth_Q8_0 = {
+      package = "strata-model-unsloth-q8-0";
+      family = "qwen35_ista";
+    };
+    Gyro_S = {
       package = "strata-model-gyro-s";
       family = "qwen35moe";
     };
-    Gyro-M = {
+    Gyro_M = {
       package = "strata-model-gyro-m";
       family = "qwen35moe";
     };
-    DSV41_IQ1_M = {
+    Qwen36_UD_Q4_K_XL = {
+      package = "strata-model-qwen36-ud-q4-k-xl";
+      family = "qwen36";
+    };
+    Qwen36_UD_Q6_K_XL = {
+      package = "strata-model-qwen36-ud-q6-k-xl";
+      family = "qwen36";
+    };
+    Qwen36_Q8_0 = {
+      package = "strata-model-qwen36-q8-0";
+      family = "qwen36";
+    };
+    DeepSeek41_IQ1_M = {
       package = "strata-model-ds4-iq1-m";
       family = "deepseek41";
     };
-    DSV41_IQ2_XXS = {
+    DeepSeek41_IQ2_XXS = {
       package = "strata-model-ds4-iq2-xxs";
       family = "deepseek41";
     };
-    DSV41_IQ2_XS = {
+    DeepSeek41_IQ2_XS = {
       package = "strata-model-ds4-iq2-xs";
       family = "deepseek41";
     };
-    DSV41_UD_Q8_K_XL = {
+    DeepSeek41_UD_Q8_K_XL = {
       package = "strata-model-ds4-ud-q8-k-xl";
       family = "deepseek41";
     };
   };
+  modelAliases = {
+    Q2_0 = "Qwen_Q2_0";
+    IQ2_XS = "Qwen_IQ2_XS";
+    IQ3_XXS = "Qwen_IQ3_XXS";
+    IQ3_S = "Qwen_IQ3_S";
+    Gyro-S = "Gyro_S";
+    Gyro-M = "Gyro_M";
+    DSV41_IQ1_M = "DeepSeek41_IQ1_M";
+    DSV41_IQ2_XXS = "DeepSeek41_IQ2_XXS";
+    DSV41_IQ2_XS = "DeepSeek41_IQ2_XS";
+    DSV41_UD_Q8_K_XL = "DeepSeek41_UD_Q8_K_XL";
+  };
   deepseek = modelPackages.${cfg.model}.family == "deepseek41";
+  qwen36 = modelPackages.${cfg.model}.family == "qwen36";
 
   # The longest context the model was trained on. Past it the rotary angles have to be rescaled, and
   # setup.py's answer is yarn at the final-over-trained factor.
@@ -136,10 +197,11 @@ let
           --argjson env '${builtins.toJSON (perfEnv // cfg.env)}' \
           --argjson extra '${builtins.toJSON (tuningCfg // cfg.extraConfig)}' \
           --argjson args '${builtins.toJSON cfg.engineArgs}' \
+          --argjson engine_extra '${builtins.toJSON cfg.extraEngineArgs}' \
           --argjson model '${builtins.toJSON cfg.modelName}' \
           --argjson roles '${builtins.toJSON cfg.gpuRoles}' \
           --argjson ctx '${builtins.toJSON cfg.maxContext}' \
-          --argjson rope '${if deepseek then "false" else "true"}' \
+          --argjson rope '${if deepseek || qwen36 then "false" else "true"}' \
           --argjson trained '${toString trainedContext}' \
           --argjson ready '${builtins.toJSON cfg.engineReady}' \
           '# rewrite one flag: drop every occurrence of it and the value that follows it, then append
@@ -160,7 +222,7 @@ let
                 else []
                 end);
            def engine_args($base):
-             (if $args != null then $args else ($base.args // []) end)
+             ((if $args != null then $args else ($base.args // []) end) + $engine_extra)
              | (if $ctx == null then [] else context_args($ctx; $trained; $rope) end) as $set
              | reduce $set[] as $kv (.; set_arg($kv[0]; $kv[1]));
            $base[0]
@@ -234,31 +296,40 @@ in
     };
 
     model = lib.mkOption {
-      type = types.enum (lib.attrNames modelPackages);
-      default = "IQ2_XS";
-      example = "IQ3_S";
-      description = "Which model to serve. It picks the model package the default package is assembled over -
-        pkgs/by-name/st/strata-model-<size>/, carrying that size's pinned GGUF shards, the pack and tokenizer cut
-        from them, and the image encoder - so switching size keeps the engine, both picture readers and the draft
-        layer cached. The experts want memory (IQ2_XS 48 GB of RAM, IQ3_XXS 60, IQ3_S 62, Gyro-S 27.6 and Gyro-M
-        35 of VRAM and RAM together), so the machine must have that much. A DSV41_* size is DeepSeek-V4.1-Flash: a
-        different engine binary, four shards plus a 110 GB n-gram table that stays on the disk, and the drafter
-        inside that pack instead of services.strata.mtp - IQ1_M wants 32 GB of RAM and IQ2_XXS 40, but IQ2_XS 64
-        and UD_Q8_K_XL 137, and the files want 262 GB and 618 GB of disk. To serve a model package the flake does
-        not carry, set services.strata.package to one assembled over it.";
+      type = types.enum (lib.attrNames modelPackages ++ lib.attrNames modelAliases);
+      default = "Qwen_IQ2_XS";
+      example = "Qwen_IQ3_S";
+      apply =
+        value:
+        if builtins.hasAttr value modelAliases then
+          lib.warn "services.strata.model = \"${value}\" is deprecated; use \"${modelAliases.${value}}\"."
+            modelAliases.${value}
+        else
+          value;
+      description = "Which model to serve. It picks the model package the default package is assembled over,
+        carrying that size's pinned GGUF shards, the pack and tokenizer cut from them, and the image encoder -
+        so switching size keeps the engine, both picture readers and the draft layer cached. See the README's
+        model table for the memory and download of each size. The canonical names are family-prefixed
+        (Qwen_*, Swift_*, Coder_*, Unsloth_*, Gyro_*, Qwen36_*, DeepSeek41_*); the old names
+        (IQ2_XS, Gyro-S, DSV41_*, ...) still work but evaluate with a deprecation warning. A DeepSeek41_* size is
+        DeepSeek-V4.1-Flash: a different engine binary, four shards plus a 110 GB n-gram table that stays on disk,
+        and the drafter inside that pack instead of services.strata.mtp. A Qwen36_* size is Qwen3.6-35B-A3B: the
+        engine reads the GGUF itself and drafts from the MTP block inside it. To serve a model package the flake
+        does not carry, set services.strata.package to one assembled over it.";
     };
 
     mtp = lib.mkOption {
       type = types.nullOr types.package;
       default =
-        if deepseek then
+        if deepseek || qwen36 then
           null
         else
           pkgs.callPackage ../../pkgs/by-name/st/strata-mtp/package.nix strataModelArgs;
       description = "The MTP draft layer the engine speculates with (pkgs/by-name/st/strata-mtp/). It is
         size-independent, so switching services.strata.model keeps it cached, and it is used for the Flash-Next
-        and Gyro sizes only: DeepSeek-V4.1-Flash drafts from the DSpark layer its own pack already holds, so the
-        default is null for a DSV41_* model rather than fetching ~55 GB the engine never reads.";
+        and Gyro sizes only. DeepSeek-V4.1-Flash drafts from the DSpark layer its own pack already holds, and
+        Qwen3.6 drafts from the MTP block inside its GGUF, so the default is null for a DeepSeek41_* or Qwen36_*
+        model rather than fetching ~55 GB the engine never reads.";
     };
 
     prefillMmq = lib.mkOption {
@@ -397,14 +468,15 @@ in
       default = null;
       example = 32768;
       description = "The context window in tokens: how much one request can hold (the conversation, the files,
-        the tool output). Null: the package's own - 131072 for the Flash-Next and Gyro sizes, and 8192 for a
-        DSV41_* size, the length setup.py checked DeepSeek-V4.1 at. It rewrites --max-context inside the package's
-        own argument list and leaves the rest as they are, so it composes with services.strata.engineArgs, which it
+        the tool output). Null: the package's own - 131072 for the Flash-Next-line and Gyro sizes, 32768 for a
+        Qwen36_* size, and 8192 for a DeepSeek41_* size. It rewrites --max-context inside the package's own
+        argument list and leaves the rest as they are, so it composes with services.strata.engineArgs, which it
         is applied after. The sizes setup.py offers are 8192, 32768, 65536, 131072, 204800, 262144, 393216 and
         524288: the KV cache grows with the context and takes VRAM the resident experts would otherwise hold, and
         past 131072 the experts plus the cache want more RAM than a 64 GB PC has. Past the 262144 positions the
         model was trained on this also gets yarn rope scaling, as setup.py writes it; an explicit --rope-scaling in
-        engineArgs is left alone. A DSV41_* size gets no rope scaling - strata-dsv41 has no rope flag at all.";
+        engineArgs is left alone. DeepSeek41_* and Qwen36_* sizes get no rope scaling: neither engine path has
+        the flag.";
     };
 
     engineReady = lib.mkOption {
@@ -413,9 +485,9 @@ in
       example = 7200;
       description = "How long the server waits for the engine to say READY before it stops waiting (the config's
         `engine_ready_s`). Null: the family's number - 3600 for DeepSeek-V4.1-Flash, whose experts and n-gram table
-        are read from the files before the first answer, and the server's 900 for the Flash-Next sizes. Raise it on
-        a slow disk; STRATA_ENGINE_READY_S in services.strata.env does the same thing, and 0 there waits for ever.
-        The wait only delays the first request - it never cancels the load.";
+        are read from the files before the first answer, and the server's 900 for the Flash-Next, Gyro and Qwen3.6
+        sizes. Raise it on a slow disk; STRATA_ENGINE_READY_S in services.strata.env does the same thing, and 0
+        there waits for ever. The wait only delays the first request - it never cancels the load.";
     };
 
     keepConversations = lib.mkOption {
@@ -464,7 +536,22 @@ in
       description = "The engine's arguments, replacing the package's list entirely: write out every flag the run
         needs, not only the ones you change, and read --pack, --native and --ple-gguf out of the package's
         etc/strata/strata.json rather than retyping them. services.strata.maxContext is the cheaper way to move one
-        flag. Null: the package's own, unchanged.";
+        flag; services.strata.extraEngineArgs appends flags without replacing the list. Null: the package's own,
+        unchanged.";
+    };
+
+    extraEngineArgs = lib.mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [
+        "--vram-reserve-mib"
+        "2048"
+      ];
+      description = "Extra engine arguments appended after the package's args (or after engineArgs, when set). The
+        engine keeps the last value of a repeated flag, so these win over the package's own. services.strata.maxContext
+        is applied after this and still owns --max-context. Use it for VRAM and KV controls the module does not model:
+        --vram-reserve-mib N for Flash-Next, Swift, Coder, Unsloth and Gyro; --expert-vram GiB or --expert-slots N for
+        Qwen3.6; and --reserve-mib N or --vram-experts F for DeepSeek-V4.1-Flash.";
     };
 
     modelName = lib.mkOption {

@@ -138,7 +138,16 @@ runCommand "strata-model-${size}"
     };
     # the contract the Strata assembly reads: see the header
     passthru.strata = {
-      inherit size packName modelName minEngine ram download memoryNote;
+      key = "Gyro_M";
+      inherit
+        size
+        packName
+        modelName
+        minEngine
+        ram
+        download
+        memoryNote
+        ;
       shard1 = shard1;
       ple = pleName;
       inherit mmprojName mmprojDir;

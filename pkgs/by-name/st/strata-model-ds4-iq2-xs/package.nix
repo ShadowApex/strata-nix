@@ -9,7 +9,7 @@
 # table is pinned as its own store path and shared between the sets that need it.
 #
 # The pack runs this package's own pin (strata-dsv41-tools), not the Flash-Next pack's tree: a file added to
-# strata-tools would re-run ~67 GB of packing for every size, and nothing in that tree is used here.
+# strata-tools would re-run the Flash-Next line's packing for every size, and nothing in that tree is used here.
 #
 # The output is two links, so the payload stays in its own store paths and the assembly can point at each:
 #   shards/   every file under its published name, the shared ones beside the set's own (pack_gguf.py reads
@@ -191,6 +191,7 @@ runCommand "strata-model-${size}"
     };
     # the contract the Strata assembly reads: see the header
     passthru.strata = {
+      key = "DeepSeek41_IQ2_XS";
       inherit
         size
         packName

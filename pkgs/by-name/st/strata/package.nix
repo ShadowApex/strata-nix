@@ -1,12 +1,13 @@
 # Strata: the HIP inference engines, their Python server and the image encoders, assembled over a model
 # package and an MTP draft-layer package. One derivation per stage so the expensive ones cache on their own,
 # and the model and the draft layer are separate packages passed in: an engine release never re-runs the
-# ~67 GB of pack work, and a model change rebuilds nothing compiled.
+# model packing, and a model change rebuilds nothing compiled.
 #
-# One build carries both engines - `strata` for the Flash-Next and Gyro families, `strata-dsv41` for
-# DeepSeek-V4.1-Flash - and the model package's family decides which one the config starts.
+# One build carries both engines - `strata` for the Flash-Next line (original, Swift, Coder, Unsloth, Gyro)
+# and Qwen3.6, `strata-dsv41` for DeepSeek-V4.1-Flash - and the model package's family decides which one the
+# config starts.
 #
-#   pkgs.callPackage ./pkgs/by-name/st/strata/package.nix { hipArchs = [ "gfx1100" "gfx1201" ]; model = pkgs.strata-model-iq3-s; mtp = pkgs.strata-mtp; prefillMmq = false; }
+#   pkgs.callPackage ./pkgs/by-name/st/strata/package.nix { hipArchs = [ "gfx1100" "gfx1201" ]; model = pkgs.strata-model-qwen-iq3-s; mtp = pkgs.strata-mtp; prefillMmq = false; }
 #
 # hipArchs and prefillMmq reach the compiled stages, model and mtp the config and the closure. Pass
 # mtp = null for a family that drafts from its own pack.
@@ -79,15 +80,19 @@ let
       or (throw "the model passed to the Strata package must be one of the strata-model-* packages: it carries no passthru.strata, so the assembly cannot name its shards, its pack or its image encoder");
 
   # Decides the engine binary, the config's shape and its flags. A model package with no `family` is a
-  # Flash-Next one.
+  # Flash-Next one; Qwen3.6 has its own engine path inside the same `strata` binary.
   dsv41 = (m.family or "qwen35_ista") == "deepseek41";
+  qwen36 = (m.family or "qwen35_ista") == "qwen36";
+  modelKey = m.key or m.size;
 
   # Refused rather than quietly dropped, so a caller who pairs a draft layer with the wrong family finds out.
   mtpLink =
     if mtp == null then
       ""
     else if dsv41 then
-      throw "${m.size} is DeepSeek-V4.1-Flash: it drafts from the DSpark layer its pack already holds, so pass mtp = null to the Strata package (services.strata.mtp defaults to null for a DSV41_* model)"
+      throw "${modelKey} is DeepSeek-V4.1-Flash: it drafts from the DSpark layer its pack already holds, so pass mtp = null to the Strata package"
+    else if qwen36 then
+      throw "${modelKey} is Qwen3.6-35B-A3B: it drafts from the MTP block inside its GGUF, so pass mtp = null to the Strata package"
     else
       ''
         mkdir -p $out/mtp
@@ -95,17 +100,23 @@ let
       '';
 
   # Both are the family's numbers as setup.py writes them: it checks DeepSeek-V4.1 at a shorter context, and
-  # names engine_ready_s only for the family whose weights are read from many files (900 is the server's own
-  # default).
-  maxContext = if dsv41 then 8192 else 131072;
+  # Qwen3.6's own path starts at 32K because the package cannot see the card's VRAM.
+  maxContext =
+    if dsv41 then
+      8192
+    else if qwen36 then
+      32768
+    else
+      131072;
   engineReady = if dsv41 then 3600 else 900;
 
-  # The substitutions below run for both config shapes, and a deepseek41 model package carries none of these
-  # names, so they have to resolve to empty strings rather than nulls.
+  # The substitutions below run for every config shape, and a DeepSeek or Qwen3.6 model package carries none
+  # of these names, so they have to resolve to empty strings rather than nulls.
   orEmpty = v: if v == null then "" else v;
   shard1 = orEmpty (m.shard1 or null);
   plePath = orEmpty (m.ple or null);
   mmprojName = orEmpty (m.mmprojName or null);
+  profileName = m.expertProfile or "expert-profile.bin";
 
   # The payload links and the staged profile, per family. Nix builds the script text rather than bash testing
   # it: a `${null}` inside a branch bash would skip is still interpolated. The expert profile is copied out
@@ -116,9 +127,9 @@ let
       ln -s ${m.mmprojDir} $out/vision
     '')
     + mtpLink
-    + (lib.optionalString (!dsv41) ''
+    + (lib.optionalString (!dsv41 && !qwen36) ''
       mkdir -p $out/data
-      cp ${src}/data/expert-profile.bin $out/data/
+      cp ${src}/data/${profileName} $out/data/
     '');
 
   # BUILD.json's picture-reader section: the keys setup.py writes for a HIP engine with a GPU reader, and the
@@ -307,23 +318,55 @@ let
           "engine_ready_s": @READY@
         }
       ''
+    else if qwen36 then
+      # setup.py's install_own_path for Qwen3.6: the engine reads the GGUF itself, drafts from its own MTP
+      # block, and keeps only the tokenizer in the pack folder. No --pack, --expert-profile, --ple-gguf or
+      # separate MTP draft layer.
+      ''
+        {
+          "exe": "@OUT@/bin/strata",
+          "args": [
+            "--native", "@OUT@/models/@MODEL@/@S1@",
+            "--max-context", "@MAXCTX@",
+            "--prefill", "auto",
+            "--mtp", "2",
+            "--vision"
+          ],
+          "cwd": "@OUT@",
+          "tokenizer": "@OUT@/pack/@PACK@/tokenizer",
+          "model_name": "@MODEL_NAME@",
+          "arch": "qwen35moe",
+          "backend": "hip",
+          "engine_ready_s": @READY@,
+          "vision": {
+            "exe": "@OUT@/bin/strata-vision-hip",
+            "cpu_exe": "@OUT@/bin/strata-vision",
+            "mmproj": "@OUT@/vision/@MMPROJ@",
+            "model": "@OUT@/models/@MODEL@/@S1@",
+            "gpu": true,
+            "max_tokens": 1024
+          }
+        }
+      ''
     else
       # setup.py's config shape for the low-RAM resident mode: the experts the GPU does not hold live in RAM,
       # the PLE n-gram table stays on disk, and the KV cache is int8 at the full context.
       # Images need both halves: the "vision" section makes the server spawn the encoder, and "--vision" in
       # args is what makes the engine accept the requests it sends. "exe" is the GPU reader and "cpu_exe" the
       # fallback the server takes over when it cannot start or the card is outside its target list.
-      # "model" is shard 1, with shard 2 beside it under its published names - how llama.cpp resolves a split
-      # GGUF. No "threads": the encoder takes half the cores, and the target PC's core count is unknown here.
-      # JSON, so nothing in it may be commented.
+      # "model" is shard 1, with the other shards beside it under their published names - how llama.cpp
+      # resolves a split GGUF. No "threads": the encoder takes half the cores, and the target PC's core count
+      # is unknown here. JSON, so nothing in it may be commented.
       ''
         {
           "exe": "@OUT@/bin/strata",
           "args": [
             "--pack", "@OUT@/pack/@PACK@",
             "--native", "@OUT@/models/@MODEL@/@S1@",
-            "--ple-gguf", "@OUT@/models/@MODEL@/@PLE@",
-            "--expert-profile", "@OUT@/data/expert-profile.bin",
+            ${lib.optionalString (m.ple != null) ''
+              "--ple-gguf", "@OUT@/models/@MODEL@/@PLE@",
+            ''}
+            "--expert-profile", "@OUT@/data/@PROFILE@",
             "--expert-cache", "auto",
             "--prefill", "auto",
             "--spec", "4",
@@ -350,12 +393,14 @@ let
         }
       '';
 in
-runCommand "strata-${m.size}-${version}"
+runCommand "strata-${modelKey}-${version}"
   {
     meta = with lib; {
-      description = "The Strata inference engines (HIP for ${archString}), their Python server and the image encoders, with the ${m.size} model (~${m.download} GB) and its derived tokenizer${
+      description = "The Strata inference engines (HIP for ${archString}), their Python server and the image encoders, with the ${modelKey} model (~${m.download} GB) and its derived tokenizer${
         if dsv41 then
           ", whose pack holds the DSpark draft layer and the Engram n-gram table on disk"
+        else if qwen36 then
+          ", whose MTP block and experts are read from the GGUF itself"
         else
           ", the MTP draft layer (28 pinned checkpoint shards, ~55 GB) and the mmproj vision encoder (~0.9 GB)"
       }: the assembly of the stage derivations above and the model and draft-layer packages, whose closure is the whole package";
@@ -382,7 +427,7 @@ runCommand "strata-${m.size}-${version}"
     cp -a ${src}/serve ${src}/tools ${src}/chat.py ${src}/requirements.txt $out/
     # serve/ imports these two packages, so they belong to the tree the server runs from
     cp -a ${src}/strata_control ${src}/strata_cli $out/
-    ln -s ${model}/shards $out/models/${m.size}
+    ln -s ${model}/shards $out/models/${modelKey}
     ln -s ${model}/pack $out/pack/${m.packName}
     ${payloadLinks}
     ln -s ${engine}/bin/strata $out/bin/strata
@@ -398,7 +443,7 @@ runCommand "strata-${m.size}-${version}"
     cat > $out/etc/strata/strata.json <<'EOF'
     ${configJson}
     EOF
-    sed -i -e "s|@OUT@|$out|" -e "s|@MODEL@|${m.size}|" -e "s|@PACK@|${m.packName}|" -e "s|@MODEL_NAME@|${m.modelName}|" -e "s|@S1@|${shard1}|" -e "s|@PLE@|${plePath}|" -e "s|@MMPROJ@|${mmprojName}|" -e "s|@MAXCTX@|${toString maxContext}|" -e "s|@READY@|${toString engineReady}|" $out/etc/strata/strata.json
+    sed -i -e "s|@OUT@|$out|" -e "s|@MODEL@|${modelKey}|" -e "s|@PACK@|${m.packName}|" -e "s|@MODEL_NAME@|${m.modelName}|" -e "s|@S1@|${shard1}|" -e "s|@PLE@|${plePath}|" -e "s|@PROFILE@|${profileName}|" -e "s|@MMPROJ@|${mmprojName}|" -e "s|@MAXCTX@|${toString maxContext}|" -e "s|@READY@|${toString engineReady}|" $out/etc/strata/strata.json
     # "version" is the engine's own number, read out of the source it was built from rather than this
     # package's version, because the two move apart. setup.py compares it against a model's minimum and reads
     # up to four components.
@@ -406,7 +451,7 @@ runCommand "strata-${m.size}-${version}"
     # the same check setup.py makes before writing a config: fail the build rather than ship an engine that
     # reads a newer pack as noise.
     if [ "$(printf '%s\n%s\n' "$engineVersion" "${m.minEngine}" | sort -V | head -1)" != "${m.minEngine}" ]; then
-      echo "the engine is $engineVersion but the ${m.size} pack needs at least ${m.minEngine}" >&2
+      echo "the engine is $engineVersion but the ${modelKey} pack needs at least ${m.minEngine}" >&2
       exit 1
     fi
     cat > $out/bin/BUILD.json <<'EOF'
@@ -414,7 +459,7 @@ runCommand "strata-${m.size}-${version}"
       "version": "@ENGINE_VERSION@",
       "backend": "hip",
       "archs": [${lib.concatStringsSep ", " (map (a: "\"${a}\"") archList)}],
-      "model": "${m.size}",
+      "model": "${modelKey}",
       "family": "${m.family or "qwen35_ista"}",
       "engine": "${if dsv41 then "strata-dsv41" else "strata"}",
       ${buildJsonVision}
